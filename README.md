@@ -13,6 +13,8 @@ Update existing agent code in such a way that following goals are met, while kee
 - Should smoothly return back to topic once questions are answered.
 - Should reliably end the presentation when last slide is finished and enter QnA mode, i.e., simple 2 way conversation, while also being able to return back at any point in presentation based on user request.
 - Should allow pauses sent from frontend, i.e., agent stops speaking. On resuming, agent starts speaking exactly where it left off.
+
+### Additional Goals
 - Should have guard rails w.r.t underage users.
 - Should have deterministic tests for all the business logic.
 - Should have eval-style tests, i.e., LLM-as-a-judge tests.
