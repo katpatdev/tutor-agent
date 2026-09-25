@@ -909,3 +909,25 @@ opened, `.env` contents were not read or printed, and no production
 - Preflight: No OpenAI request was made.
 - Health live/ready/connect/knowledge status: 200 without `/ws`.
 - **LIVE OPENAI VALIDATION NOT RUN**
+
+## Iteration 10 — Offline release audit (paused for live authorization) (2026-09-25)
+
+### Offline results
+
+- HEAD `48febe5`
+- `uv sync --locked` — ok
+- `uv run pytest -q` — **171 passed**
+- `compileall` — ok
+- `eval_harness validate` — 21 cases; offline fixtures — 13 OK
+- Frontend: yarn frozen install; **29** tests; tsc; vite build — ok
+- Health live/ready, POST /connect, GET /knowledge/status — 200; **/ws not opened**
+- Preflight — pass; **No OpenAI request was made**
+- Dead-code search for `PresentationObserver0` / silence timer / goodbye / business people — docs/tests only (historical), not runtime
+- Created `docs/REQUIREMENTS_TRACEABILITY.md`, `docs/LIVE_TEST_RESULTS.md` (all scenarios NOT RUN)
+- Created `scripts/scan_submission.py`, `scripts/print_config_summary.py`
+- Grouped `.env.example`
+
+### Live phase
+
+**Not started.** Awaiting explicit user authorization for controlled live OpenAI validation.
+
