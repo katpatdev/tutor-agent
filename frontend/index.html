@@ -3,25 +3,64 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AI Chatbot</title>
+    <title>AI Natural Disasters Tutor</title>
   </head>
 
   <body>
     <div class="container">
-      <div class="status-bar">
-        <div class="status">Transport: <span id="connection-status">Disconnected</span></div>
-        <div class="controls">
-          <button id="connect-btn">Connect</button>
-          <button id="disconnect-btn" disabled>Disconnect</button>
+      <header class="app-header">
+        <h1>AI Natural Disasters Tutor</h1>
+        <p class="tagline">Voice lesson with pause, resume, and slide navigation</p>
+      </header>
+
+      <section class="status-bar" aria-label="Connection">
+        <div class="status" aria-live="polite">
+          Transport: <span id="connection-status">Disconnected</span>
         </div>
-      </div>
+        <div class="controls">
+          <button type="button" id="connect-btn">Connect</button>
+          <button type="button" id="disconnect-btn" disabled>Disconnect</button>
+        </div>
+      </section>
+
+      <section class="lesson-panel" aria-label="Lesson controls">
+        <div class="lesson-status" aria-live="polite">
+          <p><strong>Mode:</strong> <span id="lesson-mode">—</span></p>
+          <p><strong>Slide:</strong> <span id="lesson-slide">Slide — of 8</span></p>
+          <p><strong>Title:</strong> <span id="lesson-title">—</span></p>
+        </div>
+
+        <div class="lesson-controls">
+          <button type="button" id="pause-btn" disabled>Pause</button>
+          <button type="button" id="resume-btn" disabled>Resume</button>
+          <div class="goto-row">
+            <label for="slide-select">Go to slide</label>
+            <select id="slide-select" disabled>
+              <option value="1">1. Welcome &amp; Overview</option>
+              <option value="2">2. What Are Natural Disasters</option>
+              <option value="3">3. Why Natural Disasters Happen</option>
+              <option value="4">4. Major Types of Natural Disasters</option>
+              <option value="5">5. Impact on People</option>
+              <option value="6">6. Environmental Effects</option>
+              <option value="7">7. Preparedness and Safety</option>
+              <option value="8">8. Conclusion &amp; Discussion</option>
+            </select>
+            <button type="button" id="goto-btn" disabled>Go to Slide</button>
+          </div>
+        </div>
+
+        <p class="error-box" id="command-error" role="alert" aria-live="assertive"></p>
+        <p class="hint">
+          Resume continues from the saved logical lesson position (not exact audio bytes).
+        </p>
+      </section>
 
       <audio id="bot-audio" autoplay></audio>
 
-      <div class="debug-panel">
-        <h3>Debug Info</h3>
+      <section class="debug-panel" aria-label="Transcript and debug">
+        <h2>Transcript / Debug</h2>
         <div id="debug-log"></div>
-      </div>
+      </section>
     </div>
 
     <script type="module" src="./app.ts"></script>

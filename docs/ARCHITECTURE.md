@@ -4,81 +4,65 @@
 
 | Layer | Module | Owns |
 |-------|--------|------|
-| Deterministic control | `lesson_controller.py` | Mode, slide index, logical cursor, pause/Q&A/finished transitions, duplicate event IDs |
-| Runtime adapter | `presentation_runtime.py` | Per-session controller instance, output purpose, event-ID minting, effect → frame actions, pause/resume/goto entry points |
-| Pipeline wiring | `agent.py` | Pipecat transport/STT/LLM/TTS, `LessonLifecycleObserver`, connect/disconnect hooks |
-| Conversation content | OpenAI LLM via Pipecat | Wording of narration and answers only |
+| Curriculum metadata | `curriculum.py` | Slide index ↔ title ↔ prompt (8 slides) |
+| Deterministic control | `lesson_controller.py` | Mode, cursor, transitions, duplicate event IDs |
+| Runtime adapter | `presentation_runtime.py` | Per-session controller, output purpose, Pipecat effects, **per-session asyncio.Lock** |
+| Control protocol | `lesson_protocol.py` | Validate commands, dedupe `request_id`, state snapshots, WS URL helper |
+| Pipeline wiring | `agent.py` | Transport/STT/LLM/TTS, observer, RTVI message bridge |
+| Frontend protocol | `frontend/lessonProtocol.ts` | Parse/create envelopes, sequence tracking (no DOM) |
+| Frontend UI | `frontend/app.ts` | Controls + display; **server state is authoritative** |
+| Conversation content | OpenAI via Pipecat | Spoken wording only |
 
-The LLM must not invent slide index, pause, Q&A mode, or narration position.
+## Control-message flow
 
-## Indexing convention
+1. Browser calls `PipecatClient.sendClientMessage('lesson.command', envelope)`.
+2. Protobuf WebSocket delivers `InputTransportMessageFrame`.
+3. Observer → `LessonProtocolSession` validates → `PresentationRuntime` method under session lock.
+4. Runtime may queue `InterruptionFrame` / slide prompts.
+5. Server sends `OutputTransportMessageUrgentFrame` with RTVI `server-message` containing `lesson.command_result` and/or `lesson.state`.
+6. Browser `onServerMessage` / `RTVIEvent.ServerMessage` updates UI only from newer `sequence` values.
 
-**Slide indexes are zero-based** (`0 … slide_count-1`). Human “Slide 1…8” labels map to `0…7`.
+Commands are **never** inferred from student transcript text.
 
-## Runtime event → controller event
+## Protocol envelopes (version 1)
 
-| Runtime signal / method | Controller event |
-|-------------------------|------------------|
-| `start_session()` (once) | `START_LESSON` |
-| `BotStoppedSpeaking` after audible slide/resume narration | `SLIDE_COMPLETED` |
-| `UserStartedSpeaking` while presenting | `USER_INTERRUPTED` then `ANSWER_STARTED` |
-| Answer `BotStoppedSpeaking` with purpose `INTERRUPTION_ANSWER` | `ANSWER_COMPLETED` |
-| `pause()` | `PAUSE_REQUESTED` |
-| `resume()` | `RESUME_REQUESTED` |
-| `go_to_slide(i)` | `GOTO_SLIDE_REQUESTED` |
-| `end_session()` / disconnect | `END_SESSION` (if not already finished) |
+- `lesson.command` — client→server (`pause` | `resume` | `goto_slide` | `get_state`)
+- `lesson.state` — server→client snapshot (mode, slide index/number/total/title, flags)
+- `lesson.command_result` — ack / structured error tied to `request_id`
 
-Silence timers are **not** events.
+Slide indexes in the protocol are **zero-based**. UI displays one-based numbers.
 
-## Effect → Pipecat / application action
+## Validation & deduplication
 
-| Effect | Action |
-|--------|--------|
-| `PRESENT_SLIDE` | Queue slide system prompt via `LLMMessagesAppendFrame(run_llm=True)`; set purpose `SLIDE_NARRATION` |
-| `RESUME_NARRATION` | Queue resume instruction with logical cursor; set purpose `RESUMED_NARRATION` |
-| `STOP_NARRATION` | Queue `InterruptionFrame`; suppress next bot-stopped completion; clear purpose |
-| `BEGIN_ANSWER` | Set purpose `INTERRUPTION_ANSWER` (pipeline answers student turn) |
-| `ENTER_QA` | Queue Q&A transition prompt once; set purpose `QA_TRANSITION` |
-| `SESSION_FINISHED` | Clear purpose; mark session ended |
-| `NO_ACTION` | No frame side effects |
+Reject malformed objects, bad versions, missing `request_id`, unknown commands, non-integer/boolean slide indexes, out-of-range indexes. Invalid commands do not mutate lesson state.
 
-## Output-purpose tracking
+Duplicate `request_id` values return the cached result (bounded history, default 128).
 
-`OutputPurpose` is set by the runtime, never inferred from LLM text:
+## Per-session serialization
 
-- `SLIDE_NARRATION` / `RESUMED_NARRATION`
-- `INTERRUPTION_ANSWER`
-- `QA_TRANSITION` / `QA_RESPONSE`
-- `NONE`
+Each `PresentationRuntime` has its own `asyncio.Lock` covering lifecycle handlers and pause/resume/goto/end. No global cross-session lock.
 
-## Interruption and logical resume
+## State sequence handling
 
-1. User starts speaking during presentation → save logical cursor → `USER_INTERRUPTED` → `STOP_NARRATION` (`InterruptionFrame`) → `ANSWER_STARTED`.
-2. Cancelled bot-stop is suppressed (not slide completion).
-3. Answer audio completes → `ANSWER_COMPLETED` → `RESUME_NARRATION` from saved cursor.
+Monotonic `sequence` per WebSocket session. Frontend `LessonStateTracker` ignores `sequence <= latest`.
 
-**Exact audible / byte-offset resume is not implemented.** Cursor fields are logical checkpoints only.
+## Pause / resume / navigation
 
-## Final slide → Q&A
+- **Pause:** runtime pause → `InterruptionFrame` + suppress cancelled bot-stop → publish state. Logical cursor preserved.
+- **Resume:** restore prior mode; continue from **logical** cursor (not audio-byte resume).
+- **Goto:** validate transition first; stop narration with suppression; present requested slide.
+- **get_state:** ack + snapshot; no mutation.
 
-Completing slide index `7` → `QA_MODE` + `ENTER_QA` (invite questions). Does **not** dispatch `END_SESSION`, say goodbye as a terminal action, or close the WebSocket.
+## Frontend controls
 
-## Controller modes / events / effects
+Connect/Disconnect, Pause/Resume, slide selector (1–8) + Go to Slide. Buttons follow server `can_pause` / `can_resume` / `can_navigate`. No optimistic lesson-state updates.
 
-See Iteration 2 definitions in this document’s historical sections and `lesson_controller.py`. Invalid transitions raise `InvalidLessonTransition` and leave prior immutable state unchanged. Invalid goto indexes are rejected, never clamped.
+## `/connect` URL
 
-## Implemented through Iteration 3
+`build_ws_url` maps HTTP→`ws://` and HTTPS→`wss://` using request host (and `X-Forwarded-Proto` when present). Frontend uses public `VITE_BOT_API_URL` only (never OpenAI secrets).
 
-- Pure `LessonController` + tests
-- `PresentationRuntime` + offline runtime tests
-- `agent.py` uses runtime; `PresentationObserver0` / silence timer removed
-- Tutor persona + student TTS instructions
-- Pipecat pinned to `==1.11.0`
+## Remaining limitations
 
-## Intentionally unimplemented / remaining limitations
-
-- Frontend pause/goto/resume controls and WS command protocol
-- Exact audio-byte resume
-- Underage moderation beyond baseline persona text
-- RAG / knowledge ingest, transcript flywheel, disconnect metrics report
-- Live OpenAI e2e verification (billable)
+- Logical resume only (not audio-byte)
+- No RAG / flywheel / full moderation / production metrics
+- Live OpenAI e2e control timing not validated in offline CI

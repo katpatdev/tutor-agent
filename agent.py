@@ -6,7 +6,6 @@ SPDX-License-Identifier: BSD 2-Clause License
 
 from __future__ import annotations
 
-from typing import List
 import os
 
 from dotenv import load_dotenv
@@ -16,6 +15,8 @@ from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import (
     BotStartedSpeakingFrame,
     BotStoppedSpeakingFrame,
+    InputTransportMessageFrame,
+    OutputTransportMessageUrgentFrame,
     UserStartedSpeakingFrame,
 )
 from pipecat.observers.base_observer import BaseObserver, FramePushed
@@ -36,6 +37,8 @@ from pipecat.transports.websocket.fastapi import (
     FastAPIWebsocketTransport,
 )
 
+from curriculum import slide_prompts
+from lesson_protocol import LessonProtocolSession
 from presentation_runtime import (
     BASE_TUTOR_PROMPT,
     TTS_INSTRUCTIONS,
@@ -45,77 +48,13 @@ from presentation_runtime import (
 load_dotenv(override=True)
 
 
-SLIDE_SYSTEM_MESSAGES: List[str] = [
-    # Slide 1 – welcome & overview (index 0)
-    (
-        "SLIDE 1: WELCOME & OVERVIEW\n\n"
-        "Welcome the audience and briefly introduce the topic: Natural Disasters. "
-        "Explain that this presentation will walk through what natural disasters are, why they occur, "
-        "and how they affect people and the environment. "
-        "Mention that questions are welcome at any time and that you will continue guiding them through the slides."
-    ),
-    # Slide 2 – what are natural disasters (index 1)
-    (
-        "SLIDE 2: WHAT ARE NATURAL DISASTERS\n\n"
-        "Explain that natural disasters are extreme natural events that cause major damage to life, property, "
-        "or the environment. Examples include earthquakes, floods, hurricanes, volcanic eruptions, and droughts. "
-        "Emphasize that these events are caused by natural processes of the Earth."
-    ),
-    # Slide 3 – why they happen (index 2)
-    (
-        "SLIDE 3: WHY NATURAL DISASTERS HAPPEN\n\n"
-        "Describe the main reasons natural disasters occur: movement of tectonic plates, extreme weather patterns, "
-        "volcanic activity, and climate-related changes. "
-        "Briefly mention that some disasters are sudden while others develop slowly over time."
-    ),
-    # Slide 4 – major types (index 3)
-    (
-        "SLIDE 4: MAJOR TYPES OF NATURAL DISASTERS\n\n"
-        "Introduce the most common categories such as earthquakes, floods, cyclones, wildfires, landslides, "
-        "and volcanic eruptions. "
-        "Explain that each type has different causes and impacts depending on geography and climate."
-    ),
-    # Slide 5 – impacts on people (index 4)
-    (
-        "SLIDE 5: IMPACT ON PEOPLE\n\n"
-        "Explain how natural disasters affect communities: loss of life, injuries, destruction of homes, "
-        "and displacement of families. "
-        "Also mention disruption to healthcare, education, and daily life."
-    ),
-    # Slide 6 – environmental effects (index 5)
-    (
-        "SLIDE 6: ENVIRONMENTAL EFFECTS\n\n"
-        "Describe how natural disasters affect ecosystems: deforestation from wildfires, flooding of habitats, "
-        "soil erosion, and pollution of water sources. "
-        "Mention that while disasters cause destruction, some also reshape landscapes and ecosystems."
-    ),
-    # Slide 7 – preparedness and safety (index 6)
-    (
-        "SLIDE 7: PREPAREDNESS AND SAFETY\n\n"
-        "Explain how preparation can reduce damage and save lives. "
-        "Discuss early warning systems, evacuation plans, emergency kits, and community awareness. "
-        "Highlight that education and planning are key to disaster resilience."
-    ),
-    # Slide 8 – conclusion & discussion (index 7)
-    (
-        "SLIDE 8: CONCLUSION & DISCUSSION\n\n"
-        "Summarize that natural disasters are powerful natural events that can have serious impacts on society "
-        "and the environment. "
-        "Emphasize the importance of preparedness, scientific understanding, and community cooperation. "
-        "Invite the audience to ask questions or request clarification on any slide."
-    ),
-]
-
-
 class LessonLifecycleObserver(BaseObserver):
-    """Forwards verified speaking lifecycle frames to PresentationRuntime.
+    """Forwards speaking lifecycle and inbound transport messages to the session."""
 
-    Does not own lesson progression and does not use silence timers.
-    """
-
-    def __init__(self, runtime: PresentationRuntime):
+    def __init__(self, runtime: PresentationRuntime, protocol: LessonProtocolSession):
         super().__init__()
         self._runtime = runtime
+        self._protocol = protocol
 
     async def on_push_frame(self, data: FramePushed):
         frame = data.frame
@@ -125,6 +64,8 @@ class LessonLifecycleObserver(BaseObserver):
             await self._runtime.on_bot_stopped_speaking()
         elif isinstance(frame, UserStartedSpeakingFrame):
             await self._runtime.on_user_started_speaking()
+        elif isinstance(frame, InputTransportMessageFrame):
+            await self._protocol.handle_transport_message(frame.message)
 
 
 async def run_bot(websocket_client):
@@ -184,8 +125,6 @@ async def run_bot(websocket_client):
         ]
     )
 
-    # Placeholder task reference; runtime needs queue_frames from the real task.
-    # We construct task after observer, then bind runtime to task as frame sink.
     runtime_holder: dict = {}
 
     class _TaskFrameSink:
@@ -194,10 +133,18 @@ async def run_bot(websocket_client):
             await task.queue_frames(frames)
 
     runtime = PresentationRuntime(
-        slide_prompts=SLIDE_SYSTEM_MESSAGES,
+        slide_prompts=slide_prompts(),
         frame_sink=_TaskFrameSink(),
     )
-    observer = LessonLifecycleObserver(runtime)
+
+    async def send_outbound(message: dict) -> None:
+        task = runtime_holder["task"]
+        await task.queue_frames([OutputTransportMessageUrgentFrame(message=message)])
+
+    protocol = LessonProtocolSession(runtime, send_outbound)
+    runtime.set_on_state_changed(protocol.publish_state)
+
+    observer = LessonLifecycleObserver(runtime, protocol)
 
     task = PipelineTask(
         pipeline,
@@ -219,6 +166,7 @@ async def run_bot(websocket_client):
     @ws_transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, websocket):
         logger.info("[transport] client disconnected")
+        protocol.mark_closed()
         await runtime.end_session()
         await task.cancel()
 

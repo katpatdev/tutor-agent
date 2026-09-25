@@ -438,3 +438,84 @@ What has not been implemented (by design for Iteration 1):
 ### Next recommended step
 
 **Iteration 4:** Add frontend (or WS) control messages for pause/resume/goto validated by the backend runtime; optionally begin disconnect metrics logging and stronger underage guardrails—without yet building full RAG/flywheel unless scoped separately.
+
+---
+
+## Iteration 4: Bidirectional lesson control protocol and frontend controls
+
+- Date: 2026-09-25
+- Objective: Add versioned JSON lesson control messages over the existing Pipecat Protobuf WebSocket, wire pause/resume/goto/get_state to `PresentationRuntime`, publish authoritative `lesson.state`, and update the vanilla TS frontend with lesson controls. Offline tests only; no live OpenAI calls; no RAG/flywheel/metrics.
+- Starting commit: `f21cd26`
+- Starting Git status: clean after Iteration 3 checkpoint.
+
+### Before
+
+- Backend owned lesson progression but had no browser control channel.
+- `/connect` always returned `ws://localhost:7860/ws`.
+- Frontend only had Connect/Disconnect + debug log.
+
+### Baseline before editing
+
+- `uv run pytest -q` → 40 passed
+- `yarn tsc --noEmit` / `yarn vite build` → passed
+
+### Exact APIs inspected
+
+- Python 1.11.0: `InputTransportMessageFrame`, `OutputTransportMessageUrgentFrame`, `ProtobufFrameSerializer` (messages enabled), FastAPI WS broadcast of transport messages
+- RTVI models: label `rtvi-ai`, types `client-message` / `server-message`
+- JS `@pipecat-ai/client-js@1.6.0`: `sendClientMessage(msgType, data)`, `onServerMessage`, `RTVIEvent.ServerMessage`
+
+### Files created
+
+- `curriculum.py`
+- `lesson_protocol.py`
+- `tests/test_lesson_protocol.py`
+- `frontend/lessonProtocol.ts`
+- `frontend/lessonProtocol.test.ts`
+- `frontend/.env.example`
+
+### Files modified
+
+- `agent.py`, `main.py`, `presentation_runtime.py`
+- `frontend/app.ts`, `index.html`, `style.css`, `package.json`, `yarn.lock`, `vite.config.js`, `tsconfig.json`
+- `docs/ARCHITECTURE.md`, `docs/PIPECAT_COMPATIBILITY.md`, `docs/IMPLEMENTATION_LOG.md`
+
+### Protocol design
+
+- Version 1 envelopes: `lesson.command`, `lesson.state`, `lesson.command_result`
+- Client: `sendClientMessage('lesson.command', envelope)`
+- Server: RTVI `server-message` data = lesson envelope
+- Dedup: bounded OrderedDict of `request_id` (128)
+- Serialization: per-session `asyncio.Lock` on runtime
+
+### Dependency changes
+
+- Frontend: `vitest@3.2.4` (exact) + transitive Vitest deps via Yarn
+- No Python dependency changes
+- No Pipecat upgrade
+
+### Validation results
+
+- `uv run pytest -q` → **55 passed**
+- `yarn test` → **8 passed**
+- `yarn tsc --noEmit` → pass (after ESNext/vite client tsconfig)
+- `yarn vite build` → pass
+- `POST /connect` → 200 `ws://localhost:7860/ws`; with `X-Forwarded-Proto: https` → `wss://example.com/ws`
+- No WebSocket `/ws` opened during validation
+- No live OpenAI calls
+- `.env` not opened/printed/tracked
+
+### Failures and resolutions
+
+- `tsc` rejected `import.meta` under `module: commonjs` → updated frontend `tsconfig` to ESNext + `vite/client` types.
+- Invalid goto while answering initially stopped narration before rejection → validate transition before stopping.
+
+### Known limitations
+
+- Logical resume only
+- No frontend auth; public `VITE_BOT_API_URL` only
+- Live control under real TTS not exercised offline
+
+### Next recommended step
+
+**Iteration 5:** Disconnect metrics report + stronger underage guardrails and/or knowledge ingestion—scoped separately from transcript flywheel unless required together.

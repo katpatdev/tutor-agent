@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 load_dotenv(override=True)
 
 from agent import run_bot
+from lesson_protocol import build_ws_url
 
 
 @asynccontextmanager
@@ -49,7 +50,13 @@ async def websocket_endpoint(websocket: WebSocket):
 
 @app.post("/connect")
 async def bot_connect(request: Request) -> Dict[Any, Any]:
-    return {"ws_url": "ws://localhost:7860/ws"}
+    host = request.headers.get("host") or request.url.hostname or "localhost:7860"
+    scheme = request.url.scheme or "http"
+    # Prefer forwarded proto when present (reverse proxies).
+    forwarded = request.headers.get("x-forwarded-proto")
+    if forwarded:
+        scheme = forwarded.split(",")[0].strip()
+    return {"ws_url": build_ws_url(scheme=scheme, host=host, path="/ws")}
 
 
 async def main():

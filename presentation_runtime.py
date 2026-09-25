@@ -8,9 +8,10 @@ Pipecat-specific I/O stays here; lesson_controller.py remains framework-free.
 
 from __future__ import annotations
 
+import asyncio
 import itertools
 from enum import Enum, auto
-from typing import Any, List, Optional, Protocol, Sequence
+from typing import Any, Awaitable, Callable, List, Optional, Protocol, Sequence
 
 from lesson_controller import (
     InvalidLessonTransition,
@@ -63,10 +64,14 @@ class FrameSink(Protocol):
     async def queue_frames(self, frames: Sequence[Any]) -> None: ...
 
 
+StateChangedCallback = Callable[[], Awaitable[None]]
+
+
 class PresentationRuntime:
     """Per-WebSocket-session lesson runtime.
 
     One instance per client session. Not shared globally.
+    All public state transitions are serialized with a per-session asyncio.Lock.
     """
 
     def __init__(
@@ -78,6 +83,7 @@ class PresentationRuntime:
         controller: Optional[LessonController] = None,
         interruption_frame_factory: Optional[Any] = None,
         messages_append_frame_factory: Optional[Any] = None,
+        on_state_changed: Optional[StateChangedCallback] = None,
     ) -> None:
         if not slide_prompts:
             raise ValueError("slide_prompts must be non-empty")
@@ -98,10 +104,19 @@ class PresentationRuntime:
         self._active_utterance_id = 0
         self._qa_transition_queued = False
         self._presented_slide_instructions: set[int] = set()
+        self._lock = asyncio.Lock()
+        self._on_state_changed = on_state_changed
 
         # Factories allow offline tests without importing Pipecat frames.
         self._interruption_frame_factory = interruption_frame_factory
         self._messages_append_frame_factory = messages_append_frame_factory
+
+    def set_on_state_changed(self, callback: Optional[StateChangedCallback]) -> None:
+        self._on_state_changed = callback
+
+    async def _notify_state_changed(self) -> None:
+        if self._on_state_changed is not None:
+            await self._on_state_changed()
 
     @property
     def state(self) -> LessonState:
@@ -143,9 +158,31 @@ class PresentationRuntime:
         await self._frame_sink.queue_frames([frame])
 
     async def _dispatch(self, event: LessonEvent) -> TransitionResult:
+        previous_mode = self._controller.state.mode
+        previous_cursor = self._controller.state.cursor
         result = self._controller.apply(event)
         await self._interpret_effect(result.effect)
+        if (
+            result.state.mode is not previous_mode
+            or result.state.cursor != previous_cursor
+            or result.effect is not LessonEffect.NO_ACTION
+        ):
+            await self._notify_state_changed()
         return result
+
+    async def _stop_active_narration_for_navigation(self) -> None:
+        """Stop audible output before a slide jump; do not complete the prior slide."""
+        if self._bot_speaking or self._output_purpose in {
+            OutputPurpose.SLIDE_NARRATION,
+            OutputPurpose.RESUMED_NARRATION,
+            OutputPurpose.INTERRUPTION_ANSWER,
+            OutputPurpose.QA_TRANSITION,
+            OutputPurpose.QA_RESPONSE,
+        }:
+            self._suppress_next_bot_stopped = True
+            self._utterance_audible = False
+            self._output_purpose = OutputPurpose.NONE
+            await self._queue_interruption()
 
     async def _interpret_effect(self, effect: LessonEffect) -> None:
         if effect is LessonEffect.PRESENT_SLIDE:
@@ -219,131 +256,152 @@ class PresentationRuntime:
 
     async def start_session(self) -> Optional[TransitionResult]:
         """Start the lesson once when the session is ready."""
-        if self._lesson_started or self._session_ended:
-            return None
-        self._lesson_started = True
-        return await self._dispatch(
-            LessonEvent(
-                type=LessonEventType.START_LESSON,
-                event_id=self._new_event_id("start-lesson"),
-            )
-        )
-
-    async def on_bot_started_speaking(self) -> None:
-        self._bot_speaking = True
-        self._utterance_audible = True
-        if (
-            self._controller.state.mode is LessonMode.QA_MODE
-            and self._output_purpose is OutputPurpose.NONE
-        ):
-            self._output_purpose = OutputPurpose.QA_RESPONSE
-
-    async def on_bot_stopped_speaking(self) -> None:
-        self._bot_speaking = False
-        if self._suppress_next_bot_stopped:
-            self._suppress_next_bot_stopped = False
-            self._utterance_audible = False
-            return
-        if not self._utterance_audible:
-            return
-        self._utterance_audible = False
-
-        purpose = self._output_purpose
-        if purpose in {OutputPurpose.SLIDE_NARRATION, OutputPurpose.RESUMED_NARRATION}:
-            slide = self._controller.state.cursor.slide_index
-            utterance = self._active_utterance_id
-            await self._dispatch(
+        async with self._lock:
+            if self._lesson_started or self._session_ended:
+                return None
+            self._lesson_started = True
+            return await self._dispatch(
                 LessonEvent(
-                    type=LessonEventType.SLIDE_COMPLETED,
-                    event_id=f"slide-complete-{slide}-u{utterance}",
+                    type=LessonEventType.START_LESSON,
+                    event_id=self._new_event_id("start-lesson"),
                 )
             )
-        elif purpose is OutputPurpose.INTERRUPTION_ANSWER:
+
+    async def on_bot_started_speaking(self) -> None:
+        async with self._lock:
+            self._bot_speaking = True
+            self._utterance_audible = True
+            if (
+                self._controller.state.mode is LessonMode.QA_MODE
+                and self._output_purpose is OutputPurpose.NONE
+            ):
+                self._output_purpose = OutputPurpose.QA_RESPONSE
+
+    async def on_bot_stopped_speaking(self) -> None:
+        async with self._lock:
+            self._bot_speaking = False
+            if self._suppress_next_bot_stopped:
+                self._suppress_next_bot_stopped = False
+                self._utterance_audible = False
+                return
+            if not self._utterance_audible:
+                return
+            self._utterance_audible = False
+
+            purpose = self._output_purpose
+            if purpose in {OutputPurpose.SLIDE_NARRATION, OutputPurpose.RESUMED_NARRATION}:
+                slide = self._controller.state.cursor.slide_index
+                utterance = self._active_utterance_id
+                await self._dispatch(
+                    LessonEvent(
+                        type=LessonEventType.SLIDE_COMPLETED,
+                        event_id=f"slide-complete-{slide}-u{utterance}",
+                    )
+                )
+            elif purpose is OutputPurpose.INTERRUPTION_ANSWER:
+                await self._dispatch(
+                    LessonEvent(
+                        type=LessonEventType.ANSWER_COMPLETED,
+                        event_id=self._new_event_id(
+                            f"answer-complete-u{self._active_utterance_id}"
+                        ),
+                    )
+                )
+            elif purpose in {OutputPurpose.QA_TRANSITION, OutputPurpose.QA_RESPONSE}:
+                self._output_purpose = OutputPurpose.NONE
+
+    async def on_user_started_speaking(self) -> None:
+        async with self._lock:
+            if self._controller.state.mode is not LessonMode.PRESENTING:
+                return
+            if self._output_purpose not in {
+                OutputPurpose.SLIDE_NARRATION,
+                OutputPurpose.RESUMED_NARRATION,
+                OutputPurpose.NONE,
+            }:
+                return
+
+            cursor = self._logical_cursor()
             await self._dispatch(
                 LessonEvent(
-                    type=LessonEventType.ANSWER_COMPLETED,
+                    type=LessonEventType.USER_INTERRUPTED,
                     event_id=self._new_event_id(
-                        f"answer-complete-u{self._active_utterance_id}"
+                        f"interrupt-u{self._active_utterance_id}"
+                    ),
+                    cursor=cursor,
+                )
+            )
+            await self._dispatch(
+                LessonEvent(
+                    type=LessonEventType.ANSWER_STARTED,
+                    event_id=self._new_event_id(
+                        f"answer-start-u{self._active_utterance_id}"
                     ),
                 )
             )
-        elif purpose in {OutputPurpose.QA_TRANSITION, OutputPurpose.QA_RESPONSE}:
-            self._output_purpose = OutputPurpose.NONE
-
-    async def on_user_started_speaking(self) -> None:
-        if self._controller.state.mode is not LessonMode.PRESENTING:
-            return
-        if self._output_purpose not in {
-            OutputPurpose.SLIDE_NARRATION,
-            OutputPurpose.RESUMED_NARRATION,
-            OutputPurpose.NONE,
-        }:
-            return
-
-        cursor = self._logical_cursor()
-        await self._dispatch(
-            LessonEvent(
-                type=LessonEventType.USER_INTERRUPTED,
-                event_id=self._new_event_id(
-                    f"interrupt-u{self._active_utterance_id}"
-                ),
-                cursor=cursor,
-            )
-        )
-        # Answer phase begins as the pipeline prepares to handle the student turn.
-        await self._dispatch(
-            LessonEvent(
-                type=LessonEventType.ANSWER_STARTED,
-                event_id=self._new_event_id(
-                    f"answer-start-u{self._active_utterance_id}"
-                ),
-            )
-        )
 
     async def pause(self, cursor: Optional[NarrationCursor] = None) -> TransitionResult:
-        return await self._dispatch(
-            LessonEvent(
-                type=LessonEventType.PAUSE_REQUESTED,
-                event_id=self._new_event_id("pause"),
-                cursor=cursor or self._logical_cursor(),
-            )
-        )
-
-    async def resume(self) -> TransitionResult:
-        return await self._dispatch(
-            LessonEvent(
-                type=LessonEventType.RESUME_REQUESTED,
-                event_id=self._new_event_id("resume"),
-            )
-        )
-
-    async def go_to_slide(self, slide_index: int) -> TransitionResult:
-        # Clear prior presentation mark so the target slide instruction is queued again.
-        self._presented_slide_instructions.discard(slide_index)
-        return await self._dispatch(
-            LessonEvent(
-                type=LessonEventType.GOTO_SLIDE_REQUESTED,
-                event_id=self._new_event_id(f"goto-{slide_index}"),
-                slide_index=slide_index,
-            )
-        )
-
-    async def end_session(self) -> Optional[TransitionResult]:
-        if self._session_ended or self._controller.state.mode is LessonMode.FINISHED:
-            return None
-        if self._controller.state.mode is LessonMode.IDLE:
-            self._session_ended = True
-            return None
-        try:
+        async with self._lock:
             return await self._dispatch(
                 LessonEvent(
-                    type=LessonEventType.END_SESSION,
-                    event_id=self._new_event_id("end-session"),
+                    type=LessonEventType.PAUSE_REQUESTED,
+                    event_id=self._new_event_id("pause"),
+                    cursor=cursor or self._logical_cursor(),
                 )
             )
-        except InvalidLessonTransition:
-            self._session_ended = True
-            return None
+
+    async def resume(self) -> TransitionResult:
+        async with self._lock:
+            return await self._dispatch(
+                LessonEvent(
+                    type=LessonEventType.RESUME_REQUESTED,
+                    event_id=self._new_event_id("resume"),
+                )
+            )
+
+    async def go_to_slide(self, slide_index: int) -> TransitionResult:
+        async with self._lock:
+            state = self._controller.state
+            if state.mode not in {LessonMode.PRESENTING, LessonMode.QA_MODE}:
+                raise InvalidLessonTransition(
+                    "GOTO_SLIDE_REQUESTED is only valid from PRESENTING or QA_MODE",
+                    mode=state.mode,
+                    event_type=LessonEventType.GOTO_SLIDE_REQUESTED,
+                )
+            if slide_index < 0 or slide_index >= state.slide_count:
+                raise InvalidLessonTransition(
+                    f"slide_index {slide_index} is outside valid range "
+                    f"[0, {state.slide_count})",
+                    mode=state.mode,
+                    event_type=LessonEventType.GOTO_SLIDE_REQUESTED,
+                )
+            await self._stop_active_narration_for_navigation()
+            self._presented_slide_instructions.discard(slide_index)
+            return await self._dispatch(
+                LessonEvent(
+                    type=LessonEventType.GOTO_SLIDE_REQUESTED,
+                    event_id=self._new_event_id(f"goto-{slide_index}"),
+                    slide_index=slide_index,
+                )
+            )
+
+    async def end_session(self) -> Optional[TransitionResult]:
+        async with self._lock:
+            if self._session_ended or self._controller.state.mode is LessonMode.FINISHED:
+                return None
+            if self._controller.state.mode is LessonMode.IDLE:
+                self._session_ended = True
+                return None
+            try:
+                return await self._dispatch(
+                    LessonEvent(
+                        type=LessonEventType.END_SESSION,
+                        event_id=self._new_event_id("end-session"),
+                    )
+                )
+            except InvalidLessonTransition:
+                self._session_ended = True
+                return None
 
 
 class RecordingFrameSink:
