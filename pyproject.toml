@@ -9,3 +9,8 @@ dependencies = [
     "uvicorn",
     "pipecat-ai[silero,websocket,openai]>=0.0.102",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
