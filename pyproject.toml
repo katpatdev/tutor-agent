@@ -8,6 +8,8 @@ dependencies = [
     "python-dotenv",
     "uvicorn",
     "pipecat-ai[openai,silero,websocket]==1.11.0",
+    "pypdf==5.4.0",
+    "python-multipart==0.0.20",
 ]
 
 [dependency-groups]

@@ -4,6 +4,7 @@
 # SPDX-License-Identifier: BSD 2-Clause License
 #
 import asyncio
+import os
 from contextlib import asynccontextmanager
 from typing import Any, Dict
 
@@ -16,13 +17,38 @@ from fastapi.middleware.cors import CORSMiddleware
 load_dotenv(override=True)
 
 from agent import run_bot
+from embedding_service import OpenAIEmbeddingClient, load_rag_config
+from knowledge_api import router as knowledge_router
+from knowledge_store import SHARED_KNOWLEDGE_STORE
 from lesson_protocol import build_ws_url
+from moderation_service import OpenAIModerationClient, load_safety_config
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Handles FastAPI startup and shutdown."""
-    yield  # Run app
+    safety_config = load_safety_config()
+    rag_config = load_rag_config()
+    api_key = os.getenv("OPENAI_API_KEY")
+    moderation = OpenAIModerationClient(
+        api_key=api_key,
+        model=safety_config.moderation_model,
+        timeout_seconds=safety_config.timeout_seconds,
+    )
+    embedding = OpenAIEmbeddingClient(
+        api_key=api_key,
+        model=rag_config.embedding_model,
+        timeout_seconds=rag_config.embedding_timeout_seconds,
+        batch_size=rag_config.embedding_batch_size,
+    )
+    app.state.knowledge = {
+        "config": rag_config,
+        "store": SHARED_KNOWLEDGE_STORE,
+        "moderation_client": moderation,
+        "embedding_client": embedding,
+        "upload_enabled": True,
+    }
+    yield
 
 
 # Initialize FastAPI app with lifespan manager
@@ -36,6 +62,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(knowledge_router)
 
 
 @app.websocket("/ws")

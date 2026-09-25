@@ -26,10 +26,11 @@ There must exist some way where agent's own old transcripts can be used to impro
 
 ### Local Setup
 #### Setup Agent
-Environment file (.env at root)
+Environment file (`.env` at root — never commit secrets)
 ```shell
 # .env file
 OPENAI_API_KEY=
+# Optional non-secret overrides: see .env.example (moderation + RAG)
 ```
 Starting Python Agent
 ```shell
@@ -42,3 +43,15 @@ cd frontend
 yarn install
 yarn dev
 ```
+
+#### Knowledge upload (Iteration 6)
+
+With the backend running:
+
+1. Open the frontend and use **Classroom knowledge** to upload `.txt`, `.md`, or text-based `.pdf`.
+2. Or call `POST /knowledge/documents` (multipart `file`) and `GET /knowledge/status`.
+3. Knowledge is stored **in memory only** until the server process restarts.
+4. Uploaded text is moderated before embedding; rejected documents are not stored.
+5. Student questions that pass safety may retrieve temporary reference context for that turn only.
+
+Do not put `OPENAI_API_KEY` in frontend / `VITE_` variables.

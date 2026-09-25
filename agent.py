@@ -38,6 +38,8 @@ from pipecat.transports.websocket.fastapi import (
 )
 
 from curriculum import slide_prompts
+from embedding_service import OpenAIEmbeddingClient, load_rag_config
+from knowledge_store import SHARED_KNOWLEDGE_STORE
 from lesson_protocol import LessonProtocolSession
 from moderation_service import OpenAIModerationClient, load_safety_config
 from presentation_runtime import (
@@ -45,12 +47,14 @@ from presentation_runtime import (
     TTS_INSTRUCTIONS,
     PresentationRuntime,
 )
+from retrieval_processor import RetrievalProcessor, SessionRetrievalState
 from safety_processors import InputSafetyProcessor, OutputSafetyProcessor
 
 load_dotenv(override=True)
 
-# Validate non-secret safety configuration at import/startup.
+# Validate non-secret configuration at import/startup.
 SAFETY_CONFIG = load_safety_config()
+RAG_CONFIG = load_rag_config()
 
 
 class LessonLifecycleObserver(BaseObserver):
@@ -136,6 +140,12 @@ async def run_bot(websocket_client):
         model=SAFETY_CONFIG.moderation_model,
         timeout_seconds=SAFETY_CONFIG.timeout_seconds,
     )
+    embedding_client = OpenAIEmbeddingClient(
+        api_key=api_key,
+        model=RAG_CONFIG.embedding_model,
+        timeout_seconds=RAG_CONFIG.embedding_timeout_seconds,
+        batch_size=RAG_CONFIG.embedding_batch_size,
+    )
     input_safety = InputSafetyProcessor(
         runtime=runtime,
         moderation_client=moderation_client,
@@ -147,11 +157,30 @@ async def run_bot(websocket_client):
         config=SAFETY_CONFIG,
     )
 
+    retrieval_session = SessionRetrievalState()
+
+    async def send_outbound(message: dict) -> None:
+        task = runtime_holder["task"]
+        await task.queue_frames([OutputTransportMessageUrgentFrame(message=message)])
+
+    async def send_retrieval(message: dict) -> None:
+        await send_outbound(message)
+
+    retrieval = RetrievalProcessor(
+        runtime=runtime,
+        store=SHARED_KNOWLEDGE_STORE,
+        embedding_client=embedding_client,
+        config=RAG_CONFIG,
+        send_retrieval_message=send_retrieval,
+        session_state=retrieval_session,
+    )
+
     pipeline = Pipeline(
         [
             ws_transport.input(),
             stt,
             input_safety,
+            retrieval,
             context_aggregator.user(),
             llm,
             output_safety,
@@ -160,10 +189,6 @@ async def run_bot(websocket_client):
             context_aggregator.assistant(),
         ]
     )
-
-    async def send_outbound(message: dict) -> None:
-        task = runtime_holder["task"]
-        await task.queue_frames([OutputTransportMessageUrgentFrame(message=message)])
 
     protocol = LessonProtocolSession(runtime, send_outbound)
     runtime.set_on_state_changed(protocol.publish_state)

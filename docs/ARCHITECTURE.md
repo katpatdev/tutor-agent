@@ -11,9 +11,15 @@
 | Moderation abstraction | `moderation_service.py` | OpenAI Moderations client + normalized `ModerationResult` (no raw text stored) |
 | Safety policy | `safety_policy.py` | ALLOW / REDIRECT / SAFETY_HOLD, templates, in-memory safety events |
 | Safety processors | `safety_processors.py` | Input (post-STT) and output (pre-TTS) Pipecat processors |
-| Pipeline wiring | `agent.py` | Transport/STT/LLM/TTS, observer, RTVI message bridge, safety processors |
+| Embeddings | `embedding_service.py` | OpenAI Embeddings client + RAG config |
+| Knowledge ingestion | `knowledge_ingestion.py` | Parse/chunk/moderate/embed (atomic) |
+| Knowledge store | `knowledge_store.py` | Process-local in-memory vectors |
+| Retrieval | `retrieval_processor.py` | Post-safety temporary RAG context |
+| Knowledge HTTP | `knowledge_api.py` | `/knowledge/documents`, `/knowledge/status` |
+| Pipeline wiring | `agent.py` | Transport/STT/LLM/TTS, observer, RTVI message bridge, safety + retrieval |
 | Frontend protocol | `frontend/lessonProtocol.ts` | Parse/create envelopes, sequence tracking (no DOM) |
-| Frontend UI | `frontend/app.ts` | Controls + safety notice; **server state is authoritative** |
+| Frontend knowledge | `frontend/knowledgeProtocol.ts` | Upload/status/retrieval parsing (no secrets) |
+| Frontend UI | `frontend/app.ts` | Controls + safety notice + knowledge upload; **server state is authoritative** |
 | Conversation content | OpenAI via Pipecat | Spoken wording only (still gated by moderation) |
 
 ## Control-message flow
@@ -35,6 +41,14 @@ See `docs/SAFETY.md` for the full threat model.
 - **Output:** buffer one LLM response → moderate → TTS only if allowed; else trusted template.
 - **`lesson.state`** includes `safety_status` and `safety_notice` only (no scores, categories, or raw text).
 - On `hold`, Resume and navigation are rejected server-side; Disconnect stays available.
+
+## Knowledge RAG flow (Iteration 6)
+
+See `docs/KNOWLEDGE_RAG.md`.
+
+- Upload via HTTP; moderate chunks; embed with OpenAI; store in process memory.
+- Voice path: after input safety ALLOW → retrieve → temporary system reference message → LLM.
+- `knowledge.retrieval` server messages carry source metadata only.
 
 ## Protocol envelopes (version 1)
 
@@ -76,6 +90,7 @@ Connect/Disconnect, Pause/Resume, slide selector (1–8) + Go to Slide, `aria-li
 ## Remaining limitations
 
 - Logical resume only (not audio-byte)
-- No RAG / learning flywheel / production metrics persistence
+- In-memory RAG only (lost on restart; not multi-worker)
+- No learning flywheel / production metrics persistence
 - Output TTS waits for full LLM response + moderation (latency tradeoff)
 - Live OpenAI e2e control timing not validated in offline CI

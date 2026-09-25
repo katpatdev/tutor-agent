@@ -56,6 +56,34 @@
         </p>
       </section>
 
+      <section class="knowledge-panel" aria-label="Knowledge upload">
+        <h2>Classroom knowledge</h2>
+        <p class="hint">
+          Upload .txt, .md, or text-based .pdf notes. Knowledge is stored in server memory
+          only until the backend restarts.
+        </p>
+        <div class="knowledge-controls">
+          <input
+            type="file"
+            id="knowledge-file"
+            accept=".txt,.md,.pdf,text/plain,text/markdown,application/pdf"
+          />
+          <button type="button" id="knowledge-upload-btn">Upload</button>
+        </div>
+        <p id="knowledge-counts" aria-live="polite">0 document(s), 0 chunk(s)</p>
+        <p id="knowledge-upload-status" aria-live="polite"></p>
+        <p
+          class="error-box"
+          id="knowledge-upload-error"
+          role="alert"
+          aria-live="assertive"
+        ></p>
+        <p>
+          <strong>Sources used for latest answer:</strong>
+          <span id="knowledge-sources" aria-live="polite">—</span>
+        </p>
+      </section>
+
       <audio id="bot-audio" autoplay></audio>
 
       <section class="debug-panel" aria-label="Transcript and debug">

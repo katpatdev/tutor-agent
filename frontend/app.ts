@@ -22,6 +22,13 @@ import {
   type LessonCommandResultMessage,
   type LessonStateMessage,
 } from './lessonProtocol';
+import {
+  parseKnowledgeRetrievalMessage,
+  parseKnowledgeStatusResponse,
+  parseKnowledgeUploadResponse,
+  validateKnowledgeFileClient,
+  type KnowledgeRetrievalSource,
+} from './knowledgeProtocol';
 
 const BOT_API_URL =
   import.meta.env.VITE_BOT_API_URL || 'http://localhost:7860';
@@ -41,11 +48,19 @@ class WebsocketClientApp {
   private errorBox: HTMLElement | null = null;
   private safetyNotice: HTMLElement | null = null;
   private debugLog: HTMLElement | null = null;
+  private knowledgeFile: HTMLInputElement | null = null;
+  private knowledgeUploadBtn: HTMLButtonElement | null = null;
+  private knowledgeStatusEl: HTMLElement | null = null;
+  private knowledgeErrorEl: HTMLElement | null = null;
+  private knowledgeCountsEl: HTMLElement | null = null;
+  private knowledgeSourcesEl: HTMLElement | null = null;
   private botAudio: HTMLAudioElement;
   private stateTracker = new LessonStateTracker();
   private connected = false;
   private commandPending = false;
   private pendingRequestId: string | null = null;
+  private knowledgeUploading = false;
+  private maxUploadBytes = 5_242_880;
 
   constructor() {
     this.botAudio = document.createElement('audio');
@@ -55,6 +70,7 @@ class WebsocketClientApp {
     this.setupDOMElements();
     this.setupEventListeners();
     this.applyControlAvailability(null);
+    void this.refreshKnowledgeStatus();
   }
 
   private setupDOMElements(): void {
@@ -75,6 +91,16 @@ class WebsocketClientApp {
     this.errorBox = document.getElementById('command-error');
     this.safetyNotice = document.getElementById('safety-notice');
     this.debugLog = document.getElementById('debug-log');
+    this.knowledgeFile = document.getElementById(
+      'knowledge-file'
+    ) as HTMLInputElement;
+    this.knowledgeUploadBtn = document.getElementById(
+      'knowledge-upload-btn'
+    ) as HTMLButtonElement;
+    this.knowledgeStatusEl = document.getElementById('knowledge-upload-status');
+    this.knowledgeErrorEl = document.getElementById('knowledge-upload-error');
+    this.knowledgeCountsEl = document.getElementById('knowledge-counts');
+    this.knowledgeSourcesEl = document.getElementById('knowledge-sources');
   }
 
   private setupEventListeners(): void {
@@ -89,6 +115,9 @@ class WebsocketClientApp {
     this.gotoBtn?.addEventListener('click', () => {
       const value = Number(this.slideSelect?.value || '1');
       void this.sendCommand(createGotoCommand(value));
+    });
+    this.knowledgeUploadBtn?.addEventListener('click', () => {
+      void this.uploadKnowledge();
     });
   }
 
@@ -165,6 +194,15 @@ class WebsocketClientApp {
   }
 
   private handleServerPayload(data: unknown): void {
+    const retrieval = parseKnowledgeRetrievalMessage(data);
+    if (retrieval) {
+      this.renderKnowledgeSources(retrieval.sources, retrieval.status);
+      this.log(
+        `Knowledge retrieval ${retrieval.status} sources=${retrieval.sources.length}`
+      );
+      return;
+    }
+
     const parsed = parseServerMessage(data);
     if (!parsed) {
       this.log(`Ignored malformed server message: ${JSON.stringify(data)}`);
@@ -184,6 +222,128 @@ class WebsocketClientApp {
     }
 
     this.handleCommandResult(parsed);
+  }
+
+  private renderKnowledgeSources(
+    sources: KnowledgeRetrievalSource[],
+    status: string
+  ): void {
+    if (!this.knowledgeSourcesEl) return;
+    if (!sources.length) {
+      this.knowledgeSourcesEl.textContent =
+        status === 'no_match'
+          ? 'No matching uploaded sources for the latest answer.'
+          : 'No sources listed for the latest answer.';
+      return;
+    }
+    this.knowledgeSourcesEl.textContent = sources
+      .map((s) =>
+        s.page != null
+          ? `${s.label}: ${s.document_name} (page ${s.page})`
+          : `${s.label}: ${s.document_name}`
+      )
+      .join(' · ');
+  }
+
+  private setKnowledgeStatus(message: string): void {
+    if (this.knowledgeStatusEl) {
+      this.knowledgeStatusEl.textContent = message;
+    }
+  }
+
+  private setKnowledgeError(message: string): void {
+    if (this.knowledgeErrorEl) {
+      this.knowledgeErrorEl.textContent = message;
+    }
+  }
+
+  private async refreshKnowledgeStatus(): Promise<void> {
+    try {
+      const response = await fetch(`${BOT_API_URL}/knowledge/status`);
+      if (!response.ok) {
+        this.setKnowledgeStatus('Knowledge status unavailable');
+        return;
+      }
+      const parsed = parseKnowledgeStatusResponse(await response.json());
+      if (!parsed) {
+        this.setKnowledgeStatus('Knowledge status unavailable');
+        return;
+      }
+      this.maxUploadBytes = parsed.limits.max_upload_bytes;
+      if (this.knowledgeCountsEl) {
+        this.knowledgeCountsEl.textContent = `${parsed.document_count} document(s), ${parsed.chunk_count} chunk(s)`;
+      }
+      this.setKnowledgeStatus(
+        parsed.upload_enabled
+          ? 'Ready for upload (in-memory until server restart)'
+          : 'Upload disabled'
+      );
+    } catch {
+      this.setKnowledgeStatus('Knowledge status unavailable');
+    }
+  }
+
+  private async uploadKnowledge(): Promise<void> {
+    if (this.knowledgeUploading) return;
+    const file = this.knowledgeFile?.files?.[0];
+    if (!file) {
+      this.setKnowledgeError('Choose a .txt, .md, or .pdf file first.');
+      return;
+    }
+    const validation = validateKnowledgeFileClient(
+      { name: file.name, size: file.size },
+      this.maxUploadBytes
+    );
+    if (!validation.ok) {
+      this.setKnowledgeError(validation.message);
+      return;
+    }
+
+    this.knowledgeUploading = true;
+    if (this.knowledgeUploadBtn) this.knowledgeUploadBtn.disabled = true;
+    this.setKnowledgeError('');
+    this.setKnowledgeStatus('Uploading…');
+    try {
+      const body = new FormData();
+      body.append('file', file);
+      const response = await fetch(`${BOT_API_URL}/knowledge/documents`, {
+        method: 'POST',
+        body,
+      });
+      const raw = await response.json().catch(() => null);
+      if (!response.ok) {
+        const message =
+          raw &&
+          typeof raw === 'object' &&
+          raw !== null &&
+          'error' in raw &&
+          typeof (raw as { error?: { message?: string } }).error?.message ===
+            'string'
+            ? (raw as { error: { message: string } }).error.message
+            : 'Upload failed';
+        this.setKnowledgeError(message);
+        this.setKnowledgeStatus('Upload failed');
+        return;
+      }
+      const parsed = parseKnowledgeUploadResponse(raw);
+      if (!parsed) {
+        this.setKnowledgeError('Unexpected upload response');
+        this.setKnowledgeStatus('Upload failed');
+        return;
+      }
+      this.setKnowledgeStatus(
+        parsed.duplicate
+          ? `Duplicate document reused (${parsed.chunk_count} chunks)`
+          : `Uploaded ${parsed.name} (${parsed.chunk_count} chunks)`
+      );
+      await this.refreshKnowledgeStatus();
+    } catch (error) {
+      this.setKnowledgeError((error as Error).message || 'Upload failed');
+      this.setKnowledgeStatus('Upload failed');
+    } finally {
+      this.knowledgeUploading = false;
+      if (this.knowledgeUploadBtn) this.knowledgeUploadBtn.disabled = false;
+    }
   }
 
   private handleCommandResult(result: LessonCommandResultMessage): void {

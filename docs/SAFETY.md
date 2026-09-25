@@ -93,6 +93,17 @@ Disk persistence of transcripts/events is deferred to a later iteration.
 
 System prompts can be ignored, jailbroken, or overridden by model drift. Safety requires **deterministic gates** around STT→LLM and LLM→TTS using the OpenAI Moderations API plus application policy.
 
+## Document upload safety (Iteration 6)
+
+Uploaded classroom documents are untrusted. Before embedding:
+
+- OpenAI Moderation runs on each chunk via the shared moderation abstraction
+- A document-ingestion policy rejects inappropriate/graphic/dangerous material
+- Timeouts and API failures fail closed (nothing inserted)
+- Rejected text is not logged
+
+Retrieval happens **only after** student input safety returns ALLOW. Safety redirect/hold paths never trigger retrieval. See `docs/KNOWLEDGE_RAG.md`.
+
 ## Production remaining work
 
 - Live load / latency measurement under real STT/LLM/TTS
@@ -100,3 +111,4 @@ System prompts can be ignored, jailbroken, or overridden by model drift. Safety 
 - Teacher/admin override and audit workflow
 - Deployment hardening (auth, rate limits, regional crisis resources chosen by operators—not hardcoded here)
 - Transcript retention policy (later iteration)
+- Durable / authenticated knowledge storage beyond in-memory demo use

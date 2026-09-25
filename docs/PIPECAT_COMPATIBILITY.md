@@ -89,8 +89,21 @@ Pipeline placement:
 
 OpenAI Moderation (SDK `openai==3.19.2`): `AsyncOpenAI.moderations.create(input=..., model=...)`. Default model: `omni-moderation-latest` (official Moderations guide + SDK `ModerationModel` literal).
 
+## Temporary RAG context frames (Iteration 6)
+
+| Symbol | Role |
+|--------|------|
+| `LLMMessagesTransformFrame` | Strip prior RAG system messages (`strip_rag_messages`) before a new turn |
+| `LLMMessagesAppendFrame` | Inject untrusted reference system message for the current question only (`run_llm=False`) |
+
+Pipeline placement:
+
+`stt → input_safety → retrieval → user aggregator → llm → output_safety → tts`
+
+OpenAI Embeddings (SDK `openai==3.19.2`): `AsyncOpenAI.embeddings.create(input=..., model=...)`. Default model: `text-embedding-3-small`.
+
 ## Still requires a real OpenAI session to verify
 
 - End-to-end audio quality and live control timing under real TTS load
 - Exact audible/byte resume (not implemented; logical cursor only)
-- Live moderation latency under production network conditions
+- Live moderation / embedding latency under production network conditions

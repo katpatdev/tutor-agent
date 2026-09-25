@@ -616,3 +616,68 @@ Full LLM response must complete and be moderated before any of that response rea
 ### Next recommended step
 
 Iteration 6 candidates per product plan: RAG / knowledge ingestion, transcript persistence + learning flywheel, and/or production metrics—keeping OpenAI as sole external AI provider.
+
+---
+
+## Iteration 6: Knowledge ingestion and in-memory RAG
+
+- Date: 2026-09-25
+- Objective: Secure knowledge upload (txt/md/pdf), OpenAI Embeddings, process-local vector store, post-safety temporary RAG context, frontend upload UI. No transcript persistence, flywheel, production metrics, or live OpenAI in tests.
+- Starting commit: `d46574d` (`feat: add student safety and moderation guardrails`)
+- Starting Git status: clean working tree on `main` before Iter6 edits.
+
+### Before (baseline)
+
+- `uv run pytest -q` → **82 passed**
+- `yarn test` → **12 passed**; `tsc` / `vite build` pass
+
+### OpenAI Embeddings inspection
+
+- SDK: **openai==3.19.2**
+- `AsyncOpenAI.embeddings.create(input=str|list, model=...)`
+- Response: `CreateEmbeddingResponse.data[]` with `embedding`, `index`; ordered by index
+- Model: **`text-embedding-3-small`** (official Embeddings guide + SDK `EmbeddingModel`)
+- Timeouts via `asyncio.wait_for`; errors → `EmbeddingTimeout` / `EmbeddingUnavailable` / `EmbeddingDimensionError`
+
+### Dependencies added
+
+- `pypdf==5.4.0`
+- `python-multipart==0.0.20`
+- `uv.lock` updated
+
+### Files created
+
+- `embedding_service.py`, `knowledge_ingestion.py`, `knowledge_store.py`, `knowledge_api.py`, `retrieval_processor.py`
+- `tests/test_knowledge.py`
+- `frontend/knowledgeProtocol.ts`, `frontend/knowledgeProtocol.test.ts`
+- `docs/KNOWLEDGE_RAG.md`
+
+### Files modified
+
+- `main.py`, `agent.py`, `presentation_runtime.py`, `pyproject.toml`, `uv.lock`, `.env.example`, `README.md`
+- `frontend/app.ts`, `index.html`, `style.css`
+- `docs/ARCHITECTURE.md`, `docs/SAFETY.md`, `docs/PIPECAT_COMPATIBILITY.md`, `docs/IMPLEMENTATION_LOG.md`
+
+### Design notes
+
+- Pipeline: `stt → input_safety → retrieval → user agg → llm → output_safety → tts`
+- Temporary context: `LLMMessagesTransformFrame` strip + `LLMMessagesAppendFrame` inject
+- Atomic ingest; SHA-256 content dedupe; moderate-before-embed
+- HTTP: `POST /knowledge/documents`, `GET /knowledge/status`
+
+### Validation results
+
+- `uv run pytest -q` → **98 passed**
+- compileall + import check → pass
+- `yarn test` → **20 passed**
+- `yarn tsc --noEmit` / `yarn vite build` → pass
+- HTTP fakes: status 200, unsupported 400, oversized 413, successful fake upload 200, `/connect` 200; **no `/ws`**; **no live OpenAI**
+- `.env` not opened/printed/tracked
+
+### Known limitations
+
+- In-memory / single-process only; no upload auth; prompt-injection residual risk; embedding+search latency per question
+
+### Next recommended step
+
+**Iteration 7:** transcript persistence and/or learning flywheel and/or production metrics (scoped separately).

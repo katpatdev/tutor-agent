@@ -145,6 +145,25 @@ select:disabled {
   font-size: 0.95rem;
 }
 
+.knowledge-panel {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border, #d7dde5);
+}
+
+.knowledge-panel h2 {
+  margin: 0 0 8px;
+  font-size: 1.15rem;
+}
+
+.knowledge-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 10px 0;
+}
+
 .debug-panel h2 {
   margin: 0 0 10px;
   font-size: 1rem;
