@@ -123,11 +123,15 @@ class PresentationRuntime:
         self._safety_status = SafetyStatus.NORMAL
         self._safety_notice: Optional[str] = None
         self._safety_events: List[SafetyEvent] = []
+        self._observability = None
 
         # Factories allow offline tests without importing Pipecat frames.
         self._interruption_frame_factory = interruption_frame_factory
         self._messages_append_frame_factory = messages_append_frame_factory
         self._tts_speak_frame_factory = None
+
+    def set_observability(self, observability) -> None:
+        self._observability = observability
 
     def set_tts_speak_frame_factory(self, factory) -> None:
         self._tts_speak_frame_factory = factory
@@ -211,6 +215,7 @@ class PresentationRuntime:
         previous_cursor = self._controller.state.cursor
         result = self._controller.apply(event)
         await self._interpret_effect(result.effect)
+        self._note_observability(event, result)
         if (
             result.state.mode is not previous_mode
             or result.state.cursor != previous_cursor
@@ -218,6 +223,28 @@ class PresentationRuntime:
         ):
             await self._notify_state_changed()
         return result
+
+    def _note_observability(self, event: LessonEvent, result: TransitionResult) -> None:
+        obs = self._observability
+        if obs is None:
+            return
+        try:
+            obs.collector.note_lesson_state(
+                mode=result.state.mode.name,
+                slide_index=result.state.cursor.slide_index,
+            )
+            if event.type is LessonEventType.USER_INTERRUPTED:
+                obs.collector.note_interruption()
+            elif event.type is LessonEventType.ANSWER_COMPLETED:
+                obs.collector.note_answer()
+            elif event.type is LessonEventType.SLIDE_COMPLETED:
+                obs.collector.note_slide_completed()
+            elif result.effect is LessonEffect.PRESENT_SLIDE:
+                obs.collector.note_slide_started()
+            elif result.effect is LessonEffect.ENTER_QA:
+                obs.collector.note_qa_entry()
+        except Exception:  # noqa: BLE001
+            obs.collector.note_handled_error()
 
     async def _stop_active_narration_for_navigation(self) -> None:
         """Stop audible output before a slide jump; do not complete the prior slide."""

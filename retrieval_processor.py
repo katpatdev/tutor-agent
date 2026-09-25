@@ -74,6 +74,7 @@ class RetrievalProcessor(FrameProcessor):
         config: RagConfig,
         send_retrieval_message: Optional[SendRetrievalMessage] = None,
         session_state: Optional[SessionRetrievalState] = None,
+        observability=None,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -83,6 +84,7 @@ class RetrievalProcessor(FrameProcessor):
         self._config = config
         self._send = send_retrieval_message
         self._session = session_state or SessionRetrievalState()
+        self._observability = observability
 
     @property
     def session_state(self) -> SessionRetrievalState:
@@ -168,6 +170,18 @@ class RetrievalProcessor(FrameProcessor):
                 search_ms=None,
                 fallback=fallback,
             )
+            if self._observability is not None:
+                try:
+                    self._observability.record_rag_event(
+                        attempted=True,
+                        hit_count=0,
+                        source_ids=(),
+                        embedding_latency_ms=None,
+                        retrieval_latency_ms=None,
+                        fallback_reason=fallback,
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
             await self._emit_sources(query_id, [], status="no_match")
             await self.push_frame(frame, direction)
             return
@@ -239,6 +253,18 @@ class RetrievalProcessor(FrameProcessor):
             search_ms=search_ms,
             fallback=fallback,
         )
+        if self._observability is not None:
+            try:
+                self._observability.record_rag_event(
+                    attempted=True,
+                    hit_count=len(hits),
+                    source_ids=tuple(source_ids),
+                    embedding_latency_ms=embed_ms,
+                    retrieval_latency_ms=search_ms,
+                    fallback_reason=fallback,
+                )
+            except Exception:  # noqa: BLE001
+                pass
         await self._emit_sources(query_id, sources_meta, status=status)
         await self.push_frame(frame, direction)
 

@@ -16,7 +16,12 @@
 | Knowledge store | `knowledge_store.py` | Process-local in-memory vectors |
 | Retrieval | `retrieval_processor.py` | Post-safety temporary RAG context |
 | Knowledge HTTP | `knowledge_api.py` | `/knowledge/documents`, `/knowledge/status` |
-| Pipeline wiring | `agent.py` | Transport/STT/LLM/TTS, observer, RTVI message bridge, safety + retrieval |
+| Session metrics | `session_metrics.py` | Per-session collectors + disconnect report |
+| Session store | `session_store.py` | Local SQLite persistence |
+| Transcript redaction | `transcript_redaction.py` | Deterministic PII-ish placeholders |
+| Session observability | `session_observability.py` | Narrow facade for metrics + optional persistence |
+| Session export CLI | `session_export.py` | Local sanitized JSONL export |
+| Pipeline wiring | `agent.py` | Transport/STT/LLM/TTS, observer, RTVI message bridge, safety + retrieval + session lifecycle |
 | Frontend protocol | `frontend/lessonProtocol.ts` | Parse/create envelopes, sequence tracking (no DOM) |
 | Frontend knowledge | `frontend/knowledgeProtocol.ts` | Upload/status/retrieval parsing (no secrets) |
 | Frontend UI | `frontend/app.ts` | Controls + safety notice + knowledge upload; **server state is authoritative** |
@@ -49,6 +54,14 @@ See `docs/KNOWLEDGE_RAG.md`.
 - Upload via HTTP; moderate chunks; embed with OpenAI; store in process memory.
 - Voice path: after input safety ALLOW → retrieve → temporary system reference message → LLM.
 - `knowledge.retrieval` server messages carry source metadata only.
+
+## Session metrics & consent (Iteration 7)
+
+See `docs/SESSION_DATA.md`.
+
+- `session.ready` / `session.configure` handshake before lesson start.
+- Content-free metrics always collected in memory; optional SQLite persistence.
+- Redacted transcripts only with server enable **and** student consent.
 
 ## Protocol envelopes (version 1)
 
@@ -91,6 +104,7 @@ Connect/Disconnect, Pause/Resume, slide selector (1–8) + Go to Slide, `aria-li
 
 - Logical resume only (not audio-byte)
 - In-memory RAG only (lost on restart; not multi-worker)
-- No learning flywheel / production metrics persistence
+- Local SQLite session store is demo-grade (not multi-tenant auth)
+- Learning flywheel / LLM-as-judge not implemented yet
 - Output TTS waits for full LLM response + moderation (latency tradeoff)
 - Live OpenAI e2e control timing not validated in offline CI

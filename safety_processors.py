@@ -34,6 +34,14 @@ from safety_policy import (
 )
 
 
+def _decision_label(decision: SafetyDecision) -> str:
+    if decision is SafetyDecision.ALLOW:
+        return "allow"
+    if decision is SafetyDecision.REDIRECT:
+        return "redirect"
+    return "hold"
+
+
 class InputSafetyProcessor(FrameProcessor):
     """Moderate final TranscriptionFrame before the user context aggregator."""
 
@@ -43,12 +51,14 @@ class InputSafetyProcessor(FrameProcessor):
         runtime: PresentationRuntime,
         moderation_client: ModerationClient,
         config: SafetyConfig,
+        observability=None,
         **kwargs,
     ):
         super().__init__(**kwargs)
         self._runtime = runtime
         self._client = moderation_client
         self._config = config
+        self._observability = observability
         self._seen_fingerprints: Set[str] = set()
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
@@ -80,6 +90,17 @@ class InputSafetyProcessor(FrameProcessor):
                         fallback_used=True,
                     )
                 )
+                if self._observability is not None:
+                    try:
+                        self._observability.record_safety_event(
+                            decision="hold",
+                            reason_code=decision.reason.value,
+                            source="user_input",
+                            latency_ms=None,
+                            fallback_used=True,
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
                 await self._runtime.handle_blocked_user_input(decision)
                 return
 
@@ -114,8 +135,28 @@ class InputSafetyProcessor(FrameProcessor):
                     fallback_used=fallback,
                 )
             )
+            if self._observability is not None:
+                try:
+                    self._observability.record_safety_event(
+                        decision=_decision_label(decision.decision),
+                        reason_code=decision.reason.value,
+                        source="user_input",
+                        latency_ms=latency_ms,
+                        fallback_used=fallback,
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
 
             if decision.decision is SafetyDecision.ALLOW:
+                if self._observability is not None:
+                    try:
+                        self._observability.record_user_utterance(
+                            text,
+                            lesson_mode=self._runtime.state.mode.name,
+                            slide_index=self._runtime.state.cursor.slide_index,
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
                 await self.push_frame(frame, direction)
                 return
 
@@ -135,12 +176,14 @@ class OutputSafetyProcessor(FrameProcessor):
         runtime: PresentationRuntime,
         moderation_client: ModerationClient,
         config: SafetyConfig,
+        observability=None,
         **kwargs,
     ):
         super().__init__(**kwargs)
         self._runtime = runtime
         self._client = moderation_client
         self._config = config
+        self._observability = observability
         self._buffering = False
         self._parts: list[str] = []
         self._held_control: list[Frame] = []
@@ -150,6 +193,19 @@ class OutputSafetyProcessor(FrameProcessor):
 
         # Trusted application templates bypass LLM output gating.
         if isinstance(frame, TTSSpeakFrame):
+            if self._observability is not None:
+                try:
+                    text = getattr(frame, "text", "") or ""
+                    if text:
+                        self._observability.record_assistant_utterance(
+                            text,
+                            lesson_mode=self._runtime.state.mode.name,
+                            slide_index=self._runtime.state.cursor.slide_index,
+                            is_safety_template=True,
+                            playback_status="playback_completion_unknown",
+                        )
+                except Exception:  # noqa: BLE001
+                    pass
             await self.push_frame(frame, direction)
             return
 
@@ -236,8 +292,30 @@ class OutputSafetyProcessor(FrameProcessor):
                 fallback_used=fallback,
             )
         )
+        if self._observability is not None and decision.decision is not SafetyDecision.ALLOW:
+            try:
+                self._observability.record_safety_event(
+                    decision=_decision_label(decision.decision),
+                    reason_code=decision.reason.value,
+                    source="assistant_output",
+                    latency_ms=latency_ms,
+                    fallback_used=fallback,
+                )
+            except Exception:  # noqa: BLE001
+                pass
 
         if decision.decision is SafetyDecision.ALLOW:
+            if self._observability is not None:
+                try:
+                    self._observability.record_assistant_utterance(
+                        text,
+                        lesson_mode=self._runtime.state.mode.name,
+                        slide_index=self._runtime.state.cursor.slide_index,
+                        is_safety_template=False,
+                        playback_status="approved_for_tts",
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
             if start_frame is not None:
                 await self.push_frame(start_frame, direction)
             if text:

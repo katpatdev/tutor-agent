@@ -6,6 +6,7 @@ SPDX-License-Identifier: BSD 2-Clause License
 
 from __future__ import annotations
 
+import asyncio
 import os
 
 from dotenv import load_dotenv
@@ -16,6 +17,7 @@ from pipecat.frames.frames import (
     BotStartedSpeakingFrame,
     BotStoppedSpeakingFrame,
     InputTransportMessageFrame,
+    MetricsFrame,
     OutputTransportMessageUrgentFrame,
     UserStartedSpeakingFrame,
 )
@@ -49,24 +51,52 @@ from presentation_runtime import (
 )
 from retrieval_processor import RetrievalProcessor, SessionRetrievalState
 from safety_processors import InputSafetyProcessor, OutputSafetyProcessor
+from session_config import load_session_data_config
+from session_observability import SessionObservability
+from session_store import SessionStore, SessionStoreError
 
 load_dotenv(override=True)
 
 # Validate non-secret configuration at import/startup.
 SAFETY_CONFIG = load_safety_config()
 RAG_CONFIG = load_rag_config()
+SESSION_DATA_CONFIG = load_session_data_config()
+
+try:
+    SHARED_SESSION_STORE: SessionStore | None = SessionStore(SESSION_DATA_CONFIG)
+    try:
+        deleted = SHARED_SESSION_STORE.apply_retention()
+        if deleted:
+            logger.info(f"Session retention deleted {deleted} expired session(s)")
+    except Exception:  # noqa: BLE001
+        logger.warning("Session retention cleanup failed")
+except SessionStoreError:
+    SHARED_SESSION_STORE = None
+    logger.warning("Session store unavailable at startup")
+except Exception:  # noqa: BLE001
+    SHARED_SESSION_STORE = None
+    logger.warning("Session store initialization failed")
 
 
 class LessonLifecycleObserver(BaseObserver):
-    """Forwards speaking lifecycle and inbound transport messages to the session."""
+    """Forwards speaking lifecycle, metrics, and inbound transport messages."""
 
-    def __init__(self, runtime: PresentationRuntime, protocol: LessonProtocolSession):
+    def __init__(
+        self,
+        runtime: PresentationRuntime,
+        protocol: LessonProtocolSession,
+        observability: SessionObservability,
+    ):
         super().__init__()
         self._runtime = runtime
         self._protocol = protocol
+        self._observability = observability
 
     async def on_push_frame(self, data: FramePushed):
         frame = data.frame
+        if isinstance(frame, MetricsFrame):
+            self._observability.collector.ingest_metrics_frame(frame)
+            return
         if isinstance(frame, BotStartedSpeakingFrame):
             await self._runtime.on_bot_started_speaking()
         elif isinstance(frame, BotStoppedSpeakingFrame):
@@ -124,6 +154,12 @@ async def run_bot(websocket_client):
     )
 
     runtime_holder: dict = {}
+    observability = SessionObservability(
+        config=SESSION_DATA_CONFIG,
+        store=SHARED_SESSION_STORE,
+    )
+    if SHARED_SESSION_STORE is None:
+        observability.store_unavailable = True
 
     class _TaskFrameSink:
         async def queue_frames(self, frames):
@@ -134,6 +170,7 @@ async def run_bot(websocket_client):
         slide_prompts=slide_prompts(),
         frame_sink=_TaskFrameSink(),
     )
+    runtime.set_observability(observability)
 
     moderation_client = OpenAIModerationClient(
         api_key=api_key,
@@ -150,14 +187,18 @@ async def run_bot(websocket_client):
         runtime=runtime,
         moderation_client=moderation_client,
         config=SAFETY_CONFIG,
+        observability=observability,
     )
     output_safety = OutputSafetyProcessor(
         runtime=runtime,
         moderation_client=moderation_client,
         config=SAFETY_CONFIG,
+        observability=observability,
     )
 
     retrieval_session = SessionRetrievalState()
+    lesson_started = False
+    start_lock = asyncio.Lock()
 
     async def send_outbound(message: dict) -> None:
         task = runtime_holder["task"]
@@ -166,6 +207,24 @@ async def run_bot(websocket_client):
     async def send_retrieval(message: dict) -> None:
         await send_outbound(message)
 
+    async def start_lesson_once() -> None:
+        nonlocal lesson_started
+        async with start_lock:
+            if lesson_started:
+                return
+            lesson_started = True
+            observability.mark_lesson_started()
+            await runtime.start_session()
+
+    async def configuration_timeout() -> None:
+        try:
+            await asyncio.sleep(SESSION_DATA_CONFIG.configuration_timeout_seconds)
+            if not observability.configured:
+                observability.mark_configured(transcript_consent=False)
+            await start_lesson_once()
+        except asyncio.CancelledError:
+            return
+
     retrieval = RetrievalProcessor(
         runtime=runtime,
         store=SHARED_KNOWLEDGE_STORE,
@@ -173,6 +232,7 @@ async def run_bot(websocket_client):
         config=RAG_CONFIG,
         send_retrieval_message=send_retrieval,
         session_state=retrieval_session,
+        observability=observability,
     )
 
     pipeline = Pipeline(
@@ -190,10 +250,16 @@ async def run_bot(websocket_client):
         ]
     )
 
-    protocol = LessonProtocolSession(runtime, send_outbound)
+    protocol = LessonProtocolSession(
+        runtime,
+        send_outbound,
+        observability=observability,
+        transcript_persistence_available=SESSION_DATA_CONFIG.transcript_persistence_enabled,
+        on_configured_start=start_lesson_once,
+    )
     runtime.set_on_state_changed(protocol.publish_state)
 
-    observer = LessonLifecycleObserver(runtime, protocol)
+    observer = LessonLifecycleObserver(runtime, protocol, observability)
 
     task = PipelineTask(
         pipeline,
@@ -206,16 +272,26 @@ async def run_bot(websocket_client):
         enable_turn_tracking=False,
     )
     runtime_holder["task"] = task
+    timeout_task: asyncio.Task | None = None
 
     @ws_transport.event_handler("on_client_connected")
     async def on_client_connected(transport, websocket):
+        nonlocal timeout_task
         logger.info("[transport] client connected")
-        await runtime.start_session()
+        await protocol.publish_session_ready()
+        timeout_task = asyncio.create_task(configuration_timeout())
 
     @ws_transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, websocket):
         logger.info("[transport] client disconnected")
         protocol.mark_closed()
+        if timeout_task is not None:
+            timeout_task.cancel()
+        await observability.finalize(
+            disconnect_reason="client_disconnected",
+            lesson_mode=runtime.state.mode.name,
+            slide_index=runtime.state.cursor.slide_index,
+        )
         await runtime.end_session()
         await task.cancel()
 

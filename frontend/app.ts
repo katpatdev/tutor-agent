@@ -23,6 +23,11 @@ import {
   type LessonStateMessage,
 } from './lessonProtocol';
 import {
+  createSessionConfigureCommand,
+  parseSessionConfigureResult,
+  parseSessionReadyMessage,
+} from './sessionProtocol';
+import {
   parseKnowledgeRetrievalMessage,
   parseKnowledgeStatusResponse,
   parseKnowledgeUploadResponse,
@@ -54,6 +59,8 @@ class WebsocketClientApp {
   private knowledgeErrorEl: HTMLElement | null = null;
   private knowledgeCountsEl: HTMLElement | null = null;
   private knowledgeSourcesEl: HTMLElement | null = null;
+  private transcriptConsent: HTMLInputElement | null = null;
+  private transcriptStatusEl: HTMLElement | null = null;
   private botAudio: HTMLAudioElement;
   private stateTracker = new LessonStateTracker();
   private connected = false;
@@ -61,6 +68,7 @@ class WebsocketClientApp {
   private pendingRequestId: string | null = null;
   private knowledgeUploading = false;
   private maxUploadBytes = 5_242_880;
+  private configureSent = false;
 
   constructor() {
     this.botAudio = document.createElement('audio');
@@ -101,6 +109,17 @@ class WebsocketClientApp {
     this.knowledgeErrorEl = document.getElementById('knowledge-upload-error');
     this.knowledgeCountsEl = document.getElementById('knowledge-counts');
     this.knowledgeSourcesEl = document.getElementById('knowledge-sources');
+    this.transcriptConsent = document.getElementById(
+      'transcript-consent'
+    ) as HTMLInputElement;
+    this.transcriptStatusEl = document.getElementById('transcript-status');
+    if (this.transcriptConsent) {
+      this.transcriptConsent.checked = false;
+      this.transcriptConsent.disabled = false;
+    }
+    this.setTranscriptStatus(
+      'Transcript saving is optional and off by default. Metrics-only summaries may still be stored without conversation text.'
+    );
   }
 
   private setupEventListeners(): void {
@@ -193,7 +212,57 @@ class WebsocketClientApp {
     }
   }
 
+  private setTranscriptStatus(message: string): void {
+    if (this.transcriptStatusEl) {
+      this.transcriptStatusEl.textContent = message;
+    }
+  }
+
   private handleServerPayload(data: unknown): void {
+    const ready = parseSessionReadyMessage(data);
+    if (ready) {
+      if (!ready.transcript_persistence_available) {
+        this.setTranscriptStatus('Transcript storage is disabled on this server.');
+        if (this.transcriptConsent) {
+          this.transcriptConsent.checked = false;
+          this.transcriptConsent.disabled = true;
+        }
+      } else {
+        this.setTranscriptStatus(
+          'Server can store a redacted transcript if you consented before Connect.'
+        );
+      }
+      if (!this.configureSent && this.pcClient) {
+        this.configureSent = true;
+        const consent = !!this.transcriptConsent?.checked;
+        const command = createSessionConfigureCommand(consent);
+        this.pcClient.sendClientMessage('session.configure', command);
+        this.log(`Sent session.configure consent=${consent}`);
+      }
+      return;
+    }
+
+    const configureResult = parseSessionConfigureResult(data);
+    if (configureResult) {
+      if (!configureResult.ok) {
+        this.setTranscriptStatus(
+          configureResult.error?.message ||
+            'Transcript configuration was rejected.'
+        );
+      } else if (configureResult.reason === 'server_disabled') {
+        this.setTranscriptStatus('Transcript storage is disabled on this server.');
+      } else if (configureResult.reason === 'declined') {
+        this.setTranscriptStatus(
+          'Transcript saving is off for this session. Content-free metrics may still be stored.'
+        );
+      } else if (configureResult.transcript_active) {
+        this.setTranscriptStatus(
+          'Redacted transcript saving is active for this session.'
+        );
+      }
+      return;
+    }
+
     const retrieval = parseKnowledgeRetrievalMessage(data);
     if (retrieval) {
       this.renderKnowledgeSources(retrieval.sources, retrieval.status);
@@ -427,6 +496,10 @@ class WebsocketClientApp {
       const startTime = Date.now();
       this.clearError();
       this.stateTracker.reset();
+      this.configureSent = false;
+      if (this.transcriptConsent) {
+        this.transcriptConsent.disabled = true;
+      }
 
       const PipecatConfig: PipecatClientOptions = {
         transport: new WebSocketTransport(),
@@ -442,8 +515,12 @@ class WebsocketClientApp {
             this.connected = false;
             this.commandPending = false;
             this.pendingRequestId = null;
+            this.configureSent = false;
             this.updateStatus('Disconnected');
             this.applyControlAvailability(null);
+            if (this.transcriptConsent) {
+              this.transcriptConsent.disabled = false;
+            }
             this.log('Client disconnected');
           },
           onBotReady: (data) => {

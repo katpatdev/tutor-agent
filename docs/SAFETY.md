@@ -104,6 +104,10 @@ Uploaded classroom documents are untrusted. Before embedding:
 
 Retrieval happens **only after** student input safety returns ALLOW. Safety redirect/hold paths never trigger retrieval. See `docs/KNOWLEDGE_RAG.md`.
 
+## Session metrics privacy (Iteration 7)
+
+Disconnect reports and SQLite metric rows are content-free. Transcripts require server enable + consent and are redacted before persistence. See `docs/SESSION_DATA.md`.
+
 ## Production remaining work
 
 - Live load / latency measurement under real STT/LLM/TTS

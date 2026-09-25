@@ -17,6 +17,14 @@
         <div class="status" aria-live="polite">
           Transport: <span id="connection-status">Disconnected</span>
         </div>
+        <div class="consent-row">
+          <label for="transcript-consent">
+            <input type="checkbox" id="transcript-consent" />
+            Allow this session’s redacted conversation transcript to be stored
+            locally for improving future lessons.
+          </label>
+          <p id="transcript-status" class="hint" aria-live="polite"></p>
+        </div>
         <div class="controls">
           <button type="button" id="connect-btn">Connect</button>
           <button type="button" id="disconnect-btn" disabled>Disconnect</button>

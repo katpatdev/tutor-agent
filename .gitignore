@@ -169,6 +169,15 @@ ENV/
 env.bak/
 venv.bak/
 
+# Local session metrics / transcript SQLite (Iteration 7)
+data/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+exported_sessions.jsonl
+exported_sessions*.jsonl
+exports/
+
 # Spyder project settings
 .spyderproject
 .spyproject

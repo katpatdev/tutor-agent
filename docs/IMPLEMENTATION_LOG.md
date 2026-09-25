@@ -681,3 +681,48 @@ Iteration 6 candidates per product plan: RAG / knowledge ingestion, transcript p
 ### Next recommended step
 
 **Iteration 7:** transcript persistence and/or learning flywheel and/or production metrics (scoped separately).
+
+---
+
+## Iteration 7: Session metrics, consent, and local SQLite persistence
+
+- Date: 2026-09-25
+- Objective: Per-session metrics, disconnect report, consent-controlled redacted transcript persistence in local SQLite, sanitized export CLI for Iteration 8 flywheel input. No flywheel/LLM-judge/deployment.
+- Starting commit: `5539214`
+- Baseline before edit: pytest **98** passed; frontend **20** passed
+
+### Pipecat metrics inspected (1.11.0)
+
+- `MetricsFrame` + `TTFBMetricsData`, `ProcessingMetricsData`, `LLMUsageMetricsData`/`LLMTokenUsage`, `TTSUsageMetricsData`, `STTUsageMetricsData`/`STTUsage`
+- Enabled via `PipelineParams(enable_metrics=True, enable_usage_metrics=True)`
+
+### Files created
+
+- `session_config.py`, `session_metrics.py`, `session_store.py`, `session_observability.py`, `transcript_redaction.py`, `session_export.py`
+- `tests/test_session_data.py`
+- `frontend/sessionProtocol.ts`, `frontend/sessionProtocol.test.ts`
+- `docs/SESSION_DATA.md`
+
+### Files modified
+
+- `agent.py`, `lesson_protocol.py`, `presentation_runtime.py`, `safety_processors.py`, `retrieval_processor.py`
+- frontend `app.ts` / `index.html` / `style.css`
+- `.env.example`, `.gitignore`, README + architecture/safety/Pipecat docs
+
+### Validation
+
+- `uv run pytest -q` → **109 passed**
+- compileall + imports → pass
+- `uv run python -m session_export --help` → pass
+- `yarn test` → **24 passed**
+- `yarn tsc --noEmit` / `yarn vite build` → pass
+- HTTP: `POST /connect` 200; `GET /knowledge/status` 200; **no `/ws`**; **no live OpenAI**
+- `.env`, `data/`, sqlite, export patterns ignored; `.env` not opened/printed
+
+### Known limitations
+
+- SQLite is local/demo-grade; redaction incomplete by nature; playback completion not exact without Pipecat evidence; flywheel analysis deferred to Iteration 8
+
+### Next recommended step
+
+**Iteration 8:** transcript-analysis learning flywheel using consented exported data (review/promotion required; no auto-deploy of prompt changes).

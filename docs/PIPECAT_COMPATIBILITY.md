@@ -102,8 +102,30 @@ Pipeline placement:
 
 OpenAI Embeddings (SDK `openai==3.19.2`): `AsyncOpenAI.embeddings.create(input=..., model=...)`. Default model: `text-embedding-3-small`.
 
+## Metrics frames (Iteration 7)
+
+Verified against installed `pipecat-ai==1.11.0`:
+
+| Symbol | Module | Fields consumed |
+|--------|--------|-----------------|
+| `MetricsFrame` | `pipecat.frames.frames` | `data: list[MetricsData]` |
+| `MetricsData` | `pipecat.metrics.metrics` | `processor`, optional `model` |
+| `TTFBMetricsData` | `pipecat.metrics.metrics` | `value` (seconds) |
+| `ProcessingMetricsData` | `pipecat.metrics.metrics` | `value` (seconds) |
+| `LLMUsageMetricsData` / `LLMTokenUsage` | `pipecat.metrics.metrics` | `prompt_tokens`, `completion_tokens`, `total_tokens` |
+| `TTSUsageMetricsData` | `pipecat.metrics.metrics` | `value` (characters) |
+| `STTUsageMetricsData` / `STTUsage` | `pipecat.metrics.metrics` | `audio_seconds` |
+
+Also present but **not** aggregated by this app: `TTFAMetricsData`, `TTFATMetricsData`, `TextAggregationMetricsData`, `TurnMetricsData` / deprecated `SmartTurnMetricsData`.
+
+Observers available in install: `MetricsLogObserver`, `ServiceMetricsObserver`. Application uses custom `LessonLifecycleObserver` to ingest `MetricsFrame` into per-session collectors.
+
+`PipelineParams(enable_metrics=True, enable_usage_metrics=True)` enables emission.
+
+Limitations: metric availability depends on each OpenAI STT/LLM/TTS service implementation; empty/malformed entries are ignored without crashing.
+
 ## Still requires a real OpenAI session to verify
 
 - End-to-end audio quality and live control timing under real TTS load
 - Exact audible/byte resume (not implemented; logical cursor only)
-- Live moderation / embedding latency under production network conditions
+- Live moderation / embedding / metrics latency under production network conditions

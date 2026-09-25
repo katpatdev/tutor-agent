@@ -55,3 +55,11 @@ With the backend running:
 5. Student questions that pass safety may retrieve temporary reference context for that turn only.
 
 Do not put `OPENAI_API_KEY` in frontend / `VITE_` variables.
+
+#### Session metrics & optional transcripts (Iteration 7)
+
+- A disconnect metrics report prints to the **server console** (no transcript text).
+- Optional local SQLite persistence is configured via `.env.example` (`SESSION_DB_PATH`, retention, consent flags).
+- Transcript saving requires **both** `TRANSCRIPT_PERSISTENCE_ENABLED=true` and the student consent checkbox (off by default).
+- Export locally only: `uv run python -m session_export summary` / `export` (not an HTTP API).
+- See `docs/SESSION_DATA.md`.

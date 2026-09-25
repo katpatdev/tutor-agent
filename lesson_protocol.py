@@ -21,6 +21,9 @@ PROTOCOL_VERSION = 1
 MSG_COMMAND = "lesson.command"
 MSG_STATE = "lesson.state"
 MSG_RESULT = "lesson.command_result"
+MSG_SESSION_READY = "session.ready"
+MSG_SESSION_CONFIGURE = "session.configure"
+MSG_SESSION_CONFIGURE_RESULT = "session.configure_result"
 SUPPORTED_COMMANDS = frozenset({"pause", "resume", "goto_slide", "get_state"})
 REQUEST_ID_HISTORY_LIMIT = 128
 
@@ -28,6 +31,7 @@ RTVI_LABEL = "rtvi-ai"
 RTVI_CLIENT_MESSAGE = "client-message"
 RTVI_SERVER_MESSAGE = "server-message"
 LESSON_COMMAND_TYPE = "lesson.command"
+SESSION_CONFIGURE_TYPE = "session.configure"
 
 
 class ProtocolError(Exception):
@@ -142,8 +146,8 @@ def wrap_rtvi_server_message(data: Mapping[str, Any]) -> Dict[str, Any]:
     return {"label": RTVI_LABEL, "type": RTVI_SERVER_MESSAGE, "data": dict(data)}
 
 
-def extract_lesson_command_payload(transport_message: Any) -> Optional[Any]:
-    """Return the lesson.command envelope from an RTVI client-message, if present."""
+def extract_rtvi_client_envelope(transport_message: Any) -> Optional[tuple[str, Any]]:
+    """Return ``(message_type, payload)`` from an RTVI client-message, if present."""
     if not isinstance(transport_message, Mapping):
         return None
     if transport_message.get("label") != RTVI_LABEL:
@@ -153,9 +157,78 @@ def extract_lesson_command_payload(transport_message: Any) -> Optional[Any]:
     data = transport_message.get("data")
     if not isinstance(data, Mapping):
         return None
-    if data.get("t") != LESSON_COMMAND_TYPE:
+    msg_type = data.get("t")
+    if not isinstance(msg_type, str) or not msg_type:
         return None
-    return data.get("d")
+    return msg_type, data.get("d")
+
+
+def extract_lesson_command_payload(transport_message: Any) -> Optional[Any]:
+    """Return the lesson.command envelope from an RTVI client-message, if present."""
+    extracted = extract_rtvi_client_envelope(transport_message)
+    if extracted is None:
+        return None
+    msg_type, payload = extracted
+    if msg_type != LESSON_COMMAND_TYPE:
+        return None
+    return payload
+
+
+def build_session_ready(
+    *,
+    session_id: str,
+    transcript_persistence_available: bool,
+) -> Dict[str, Any]:
+    return {
+        "type": MSG_SESSION_READY,
+        "version": PROTOCOL_VERSION,
+        "session_id": session_id,
+        "transcript_persistence_available": transcript_persistence_available,
+    }
+
+
+def build_session_configure_result(
+    request_id: str,
+    *,
+    ok: bool,
+    transcript_active: bool,
+    reason: str,
+    code: Optional[str] = None,
+    message: Optional[str] = None,
+) -> Dict[str, Any]:
+    result: Dict[str, Any] = {
+        "type": MSG_SESSION_CONFIGURE_RESULT,
+        "version": PROTOCOL_VERSION,
+        "request_id": request_id,
+        "ok": ok,
+        "transcript_active": transcript_active,
+        "reason": reason,
+    }
+    if not ok:
+        result["error"] = {
+            "code": code or "INVALID_REQUEST",
+            "message": message or "Rejected",
+        }
+    return result
+
+
+def parse_session_configure(raw: Any) -> tuple[str, bool]:
+    if not isinstance(raw, Mapping):
+        raise ProtocolError("MALFORMED_MESSAGE", "Configure must be a JSON object.")
+    if raw.get("type") != MSG_SESSION_CONFIGURE:
+        raise ProtocolError("MALFORMED_MESSAGE", "Unsupported message type.")
+    if raw.get("version") != PROTOCOL_VERSION:
+        raise ProtocolError("UNSUPPORTED_VERSION", "Unsupported protocol version.")
+    request_id = raw.get("request_id")
+    if not isinstance(request_id, str) or not request_id.strip():
+        raise ProtocolError("INVALID_REQUEST_ID", "request_id must be a non-empty string.")
+    consent = raw.get("transcript_consent")
+    if not isinstance(consent, bool):
+        raise ProtocolError(
+            "INVALID_CONSENT",
+            "transcript_consent must be a Boolean.",
+        )
+    return request_id, consent
 
 
 def parse_command_envelope(raw: Any) -> ParsedCommand:
@@ -232,16 +305,36 @@ class LessonProtocolSession:
         send_outbound: SendOutbound,
         *,
         request_history_limit: int = REQUEST_ID_HISTORY_LIMIT,
+        observability: Any = None,
+        transcript_persistence_available: bool = False,
+        on_configured_start: Optional[Callable[[], Awaitable[None]]] = None,
     ) -> None:
         self._runtime = runtime
         self._send_outbound = send_outbound
         self._deduper = RequestIdDeduper(limit=request_history_limit)
         self._sequence = 0
         self._closed = False
+        self._observability = observability
+        self._transcript_persistence_available = transcript_persistence_available
+        self._on_configured_start = on_configured_start
+        self._configure_deduper: Dict[str, Dict[str, Any]] = {}
 
     @property
     def sequence(self) -> int:
         return self._sequence
+
+    async def publish_session_ready(self) -> Dict[str, Any]:
+        session_id = (
+            self._observability.session_id
+            if self._observability is not None
+            else "unknown"
+        )
+        message = build_session_ready(
+            session_id=session_id,
+            transcript_persistence_available=self._transcript_persistence_available,
+        )
+        await self._send_outbound(wrap_rtvi_server_message(message))
+        return message
 
     async def publish_state(self) -> Dict[str, Any]:
         self._sequence += 1
@@ -257,10 +350,69 @@ class LessonProtocolSession:
     async def handle_transport_message(self, transport_message: Any) -> None:
         if self._closed:
             return
-        payload = extract_lesson_command_payload(transport_message)
-        if payload is None:
+        extracted = extract_rtvi_client_envelope(transport_message)
+        if extracted is None:
             return
-        await self.handle_command_payload(payload)
+        msg_type, payload = extracted
+        if msg_type == SESSION_CONFIGURE_TYPE:
+            await self.handle_session_configure(payload)
+            return
+        if msg_type == LESSON_COMMAND_TYPE:
+            await self.handle_command_payload(payload)
+
+    async def handle_session_configure(self, raw: Any) -> Dict[str, Any]:
+        try:
+            request_id, consent = parse_session_configure(raw)
+        except ProtocolError as exc:
+            request_id = "unknown"
+            if isinstance(raw, Mapping) and isinstance(raw.get("request_id"), str):
+                request_id = raw["request_id"]
+            result = build_session_configure_result(
+                request_id,
+                ok=False,
+                transcript_active=False,
+                reason="error",
+                code=exc.code,
+                message=exc.message,
+            )
+            await self._send_outbound(wrap_rtvi_server_message(result))
+            return result
+
+        if request_id in self._configure_deduper:
+            cached = self._configure_deduper[request_id]
+            await self._send_outbound(wrap_rtvi_server_message(cached))
+            return cached
+
+        if self._observability is not None and self._observability.lesson_started:
+            result = build_session_configure_result(
+                request_id,
+                ok=False,
+                transcript_active=self._observability.collector.transcript_storage_active,
+                reason="late_change_rejected",
+                code="CONSENT_LOCKED",
+                message="Transcript consent cannot change after the lesson starts. Reconnect to change it.",
+            )
+            await self._send_outbound(wrap_rtvi_server_message(result))
+            self._configure_deduper[request_id] = result
+            return result
+
+        reason = "declined"
+        if self._observability is not None:
+            reason = self._observability.mark_configured(transcript_consent=consent)
+        transcript_active = reason == "enabled"
+        result = build_session_configure_result(
+            request_id,
+            ok=True,
+            transcript_active=transcript_active,
+            reason=reason,
+        )
+        await self._send_outbound(wrap_rtvi_server_message(result))
+        self._configure_deduper[request_id] = result
+        if self._on_configured_start is not None and (
+            self._observability is None or not self._observability.lesson_started
+        ):
+            await self._on_configured_start()
+        return result
 
     async def handle_command_payload(self, raw: Any) -> Dict[str, Any]:
         try:
@@ -317,10 +469,16 @@ class LessonProtocolSession:
 
         if parsed.command == "pause":
             await self._runtime.pause()
+            if self._observability is not None:
+                self._observability.collector.note_pause()
         elif parsed.command == "resume":
             await self._runtime.resume()
+            if self._observability is not None:
+                self._observability.collector.note_resume()
         elif parsed.command == "goto_slide":
             await self._runtime.go_to_slide(int(parsed.payload["slide_index"]))
+            if self._observability is not None:
+                self._observability.collector.note_navigation()
         else:
             raise ProtocolError("UNKNOWN_COMMAND", "Unknown command.")
 
