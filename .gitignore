@@ -178,6 +178,13 @@ exported_sessions.jsonl
 exported_sessions*.jsonl
 exports/
 
+# Learning flywheel / eval artifacts (Iteration 8) — also covered by data/
+# Explicit patterns for clarity if data/ is ever narrowed:
+data/flywheel/
+data/prompt_candidates/
+data/eval_reports/
+*.local-redacted-appendix.json
+
 # Spyder project settings
 .spyderproject
 .spyproject

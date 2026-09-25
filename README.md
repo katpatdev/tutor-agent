@@ -63,3 +63,10 @@ Do not put `OPENAI_API_KEY` in frontend / `VITE_` variables.
 - Transcript saving requires **both** `TRANSCRIPT_PERSISTENCE_ENABLED=true` and the student consent checkbox (off by default).
 - Export locally only: `uv run python -m session_export summary` / `export` (not an HTTP API).
 - See `docs/SESSION_DATA.md`.
+
+#### Learning flywheel & evaluations (Iteration 8)
+
+- Prompt registry: `prompts/` + `TUTOR_PROMPT_VERSION` (default `v1`). Candidates under `data/prompt_candidates/` never auto-activate.
+- Local friction analysis (no OpenAI on historical transcripts): `uv run python -m flywheel analyze`
+- Offline eval validation: `uv run python -m eval_harness validate` / `run-offline-fixtures`
+- See `docs/LEARNING_FLYWHEEL.md` and `docs/EVALUATIONS.md`.

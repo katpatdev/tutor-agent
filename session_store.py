@@ -17,7 +17,9 @@ from session_config import SessionDataConfig
 from session_metrics import SessionMetricsCollector
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+APPLICATION_VERSION = "tutor-agent-iter8"
+CURRICULUM_VERSION = "natural-disasters-v1"
 
 
 class SessionStoreError(Exception):
@@ -112,16 +114,63 @@ class SessionStore:
             try:
                 if created:
                     _restrictive_chmod(self._path)
-                version = conn.execute("PRAGMA user_version").fetchone()[0]
+                version = int(conn.execute("PRAGMA user_version").fetchone()[0])
                 if version == 0:
+                    # executescript auto-commits; do not wrap in an explicit transaction.
                     self._create_schema(conn)
                     conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-                elif version != SCHEMA_VERSION:
+                elif version == SCHEMA_VERSION:
+                    # Idempotent: ensure v2 columns exist (no-op if already present).
+                    self._ensure_v2_columns(conn)
+                elif version == 1:
+                    self._migrate_v1_to_v2(conn)
+                elif version > SCHEMA_VERSION:
                     raise SessionStoreError(
-                        f"Unsupported session DB schema version {version}; expected {SCHEMA_VERSION}"
+                        f"Unsupported future session DB schema version {version}"
+                    )
+                else:
+                    raise SessionStoreError(
+                        f"Unsupported session DB schema version {version}; expected 0-2"
                     )
             finally:
                 conn.close()
+
+    def _ensure_v2_columns(self, conn: sqlite3.Connection) -> None:
+        cols = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(sessions)").fetchall()
+        }
+        needed = {
+            "tutor_prompt_version": "TEXT",
+            "tutor_prompt_hash": "TEXT",
+            "curriculum_version": "TEXT",
+            "application_schema_version": "INTEGER",
+        }
+        for name, coltype in needed.items():
+            if name not in cols:
+                conn.execute(f"ALTER TABLE sessions ADD COLUMN {name} {coltype}")
+
+    def _migrate_v1_to_v2(self, conn: sqlite3.Connection) -> None:
+        """Upgrade schema 1 → 2 in a single transaction. Idempotent if re-run after success."""
+        conn.execute("BEGIN")
+        try:
+            self._ensure_v2_columns(conn)
+            # Backfill content-free metadata only; never touch transcript text.
+            conn.execute(
+                """
+                UPDATE sessions
+                SET application_schema_version = COALESCE(application_schema_version, 2),
+                    curriculum_version = COALESCE(curriculum_version, ?),
+                    tutor_prompt_version = COALESCE(tutor_prompt_version, 'v1'),
+                    tutor_prompt_hash = COALESCE(tutor_prompt_hash, '')
+                """,
+                (CURRICULUM_VERSION,),
+            )
+            conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
 
     def _create_schema(self, conn: sqlite3.Connection) -> None:
         conn.executescript(
@@ -138,7 +187,11 @@ class SessionStore:
                 final_slide_index INTEGER,
                 schema_version INTEGER NOT NULL,
                 completion_status TEXT,
-                application_version TEXT
+                application_version TEXT,
+                tutor_prompt_version TEXT,
+                tutor_prompt_hash TEXT,
+                curriculum_version TEXT,
+                application_schema_version INTEGER
             );
 
             CREATE TABLE IF NOT EXISTS transcript_events (
@@ -221,6 +274,9 @@ class SessionStore:
         rag_events: Sequence[RagEventRecord] = (),
         persist_metrics: bool = True,
         persist_transcripts: bool = False,
+        tutor_prompt_version: Optional[str] = None,
+        tutor_prompt_hash: Optional[str] = None,
+        curriculum_version: Optional[str] = None,
     ) -> None:
         report = collector.build_disconnect_report()
         with self._lock:
@@ -233,8 +289,10 @@ class SessionStore:
                         session_id, started_at, ended_at, duration_seconds,
                         disconnect_reason, transcript_consent, transcript_storage_active,
                         final_lesson_mode, final_slide_index, schema_version,
-                        completion_status, application_version
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        completion_status, application_version,
+                        tutor_prompt_version, tutor_prompt_hash,
+                        curriculum_version, application_schema_version
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         collector.session_id,
@@ -248,7 +306,11 @@ class SessionStore:
                         collector.final_slide_index,
                         SCHEMA_VERSION,
                         "completed",
-                        "tutor-agent-iter7",
+                        APPLICATION_VERSION,
+                        tutor_prompt_version,
+                        tutor_prompt_hash,
+                        curriculum_version or CURRICULUM_VERSION,
+                        SCHEMA_VERSION,
                     ),
                 )
 
@@ -367,6 +429,96 @@ class SessionStore:
             try:
                 row = conn.execute("SELECT COUNT(*) AS c FROM sessions").fetchone()
                 return int(row["c"])
+            finally:
+                conn.close()
+
+    def list_sessions_for_analysis(
+        self,
+        *,
+        start_utc: Optional[datetime] = None,
+        end_utc: Optional[datetime] = None,
+    ) -> List[Dict[str, Any]]:
+        """Load session rows + related events for local friction analysis.
+
+        Never prints transcript text. Caller must respect consent before using
+        redacted transcript fields.
+        """
+        with self._lock:
+            conn = self._connect()
+            try:
+                clauses: List[str] = []
+                params: List[Any] = []
+                if start_utc is not None:
+                    clauses.append("started_at >= ?")
+                    params.append(start_utc.astimezone(timezone.utc).isoformat())
+                if end_utc is not None:
+                    clauses.append("started_at < ?")
+                    params.append(end_utc.astimezone(timezone.utc).isoformat())
+                where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+                sessions = conn.execute(
+                    f"SELECT * FROM sessions{where} ORDER BY started_at ASC",
+                    params,
+                ).fetchall()
+                out: List[Dict[str, Any]] = []
+                for row in sessions:
+                    item: Dict[str, Any] = dict(row)
+                    sid = item["session_id"]
+                    item["metrics"] = [
+                        dict(r)
+                        for r in conn.execute(
+                            "SELECT metric_name, numeric_value, unit, service_name "
+                            "FROM metric_events WHERE session_id = ?",
+                            (sid,),
+                        ).fetchall()
+                    ]
+                    item["safety_events"] = [
+                        dict(r)
+                        for r in conn.execute(
+                            "SELECT timestamp, decision, reason_code, source, latency_ms, fallback_used "
+                            "FROM safety_events WHERE session_id = ?",
+                            (sid,),
+                        ).fetchall()
+                    ]
+                    item["rag_events"] = [
+                        {
+                            "timestamp": r["timestamp"],
+                            "attempted": bool(r["attempted"]),
+                            "hit_count": r["hit_count"],
+                            "source_ids": json.loads(r["source_ids_json"] or "[]"),
+                            "embedding_latency_ms": r["embedding_latency_ms"],
+                            "retrieval_latency_ms": r["retrieval_latency_ms"],
+                            "fallback_reason": r["fallback_reason"],
+                        }
+                        for r in conn.execute(
+                            "SELECT * FROM rag_events WHERE session_id = ?",
+                            (sid,),
+                        ).fetchall()
+                    ]
+                    # Only attach redacted transcript rows when consent was given.
+                    if item.get("transcript_consent"):
+                        item["transcript_events"] = [
+                            {
+                                "event_sequence": r["event_sequence"],
+                                "timestamp": r["timestamp"],
+                                "role": r["role"],
+                                "event_kind": r["event_kind"],
+                                "lesson_mode": r["lesson_mode"],
+                                "slide_index": r["slide_index"],
+                                "redacted_text": r["redacted_text"],
+                                "text_character_count": r["text_character_count"],
+                                "is_safety_template": bool(r["is_safety_template"]),
+                                "playback_status": r["playback_status"],
+                            }
+                            for r in conn.execute(
+                                "SELECT * FROM transcript_events WHERE session_id = ? "
+                                "ORDER BY event_sequence ASC",
+                                (sid,),
+                            ).fetchall()
+                        ]
+                    else:
+                        item["transcript_events"] = []
+                    out.append(item)
+                return out
             finally:
                 conn.close()
 

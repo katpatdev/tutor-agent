@@ -14,6 +14,16 @@ Per WebSocket session (in memory always; optionally persisted):
 
 Monetary OpenAI cost is **not** calculated.
 
+## Schema version 2 (Iteration 8)
+
+Databases created before Iteration 8 use `PRAGMA user_version = 1`. On open, `SessionStore` migrates to version **2** in a transaction, adding nullable columns:
+
+- `tutor_prompt_version`, `tutor_prompt_hash`
+- `curriculum_version`
+- `application_schema_version`
+
+Existing sessions are preserved. Migration does not print transcript text. Unsupported future versions are rejected. New sessions record the active approved prompt version/hash.
+
 ## Verified Pipecat metric sources (1.11.0)
 
 See `docs/PIPECAT_COMPATIBILITY.md`. Frames: `MetricsFrame` carrying `TTFBMetricsData`, `ProcessingMetricsData`, `LLMUsageMetricsData`, `TTSUsageMetricsData`, `STTUsageMetricsData`.
@@ -92,4 +102,4 @@ Voice tutoring continues if metrics/transcript persistence fails. Transcript wri
 - No authentication for exports (operator machine only)
 - Redaction is incomplete by nature
 - Playback completion is labeled honestly (`approved_for_tts` / `playback_completion_unknown`)
-- Ready for Iteration 8 flywheel analysis of exported/consented data — not implemented here
+- Flywheel analysis: see `docs/LEARNING_FLYWHEEL.md` (local only; no historical transcripts to OpenAI)

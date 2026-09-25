@@ -726,3 +726,54 @@ Iteration 6 candidates per product plan: RAG / knowledge ingestion, transcript p
 ### Next recommended step
 
 **Iteration 8:** transcript-analysis learning flywheel using consented exported data (review/promotion required; no auto-deploy of prompt changes).
+
+## Iteration 8 — Controlled learning flywheel + LLM-as-a-judge (2026-09-25)
+
+### Goal
+
+Local friction analysis on consented redacted history, reviewable curriculum recommendations, versioned prompt registry, synthetic eval suite, offline promotion gates. No auto-deploy; no historical transcripts to OpenAI; no live OpenAI in tests.
+
+### Baseline (before edits)
+
+- `uv run pytest -q` → **109 passed**
+- `yarn test` → **24 passed**; `tsc` / `vite build` → pass
+- HEAD `8684d15`
+
+### Files created
+
+- `prompts/registry.json`, `prompts/tutor/v1.md`, `prompts/judges/*.md`
+- `prompt_registry.py`, `friction_analyzer.py`, `curriculum_recommendations.py`, `flywheel.py`
+- `prompt_workflow.py`, `eval_llm.py`, `eval_harness.py`
+- `evals/cases/synthetic_suite_v1.json`, `evals/rubrics/pedagogical_v1.json`, `evals/fixtures/offline_scenarios.json`
+- `tests/test_flywheel.py`
+- `docs/LEARNING_FLYWHEEL.md`, `docs/EVALUATIONS.md`
+
+### Files modified
+
+- `presentation_runtime.py`, `agent.py`, `session_store.py`, `session_config.py`, `session_observability.py`
+- `.env.example`, `.gitignore`, `README.md`, `docs/ARCHITECTURE.md`, `docs/SESSION_DATA.md`, `docs/SAFETY.md`
+
+### Design notes
+
+- Active tutor prompt text preserved byte-for-byte vs prior `BASE_TUTOR_PROMPT`
+- SQLite `user_version` 1→2 transactional migration; future versions rejected
+- Promotion outcomes: `REJECT` | `NEEDS_MORE_EVIDENCE` | `ELIGIBLE_FOR_HUMAN_REVIEW` only
+- Live OpenAI gated by env + CLI flags; default path never initializes clients for flywheel/eval
+
+### Validation
+
+- `uv run pytest -q` → **152 passed**
+- compileall + imports → pass
+- `uv run python -m flywheel --help` / `prompt_workflow --help` → pass
+- `uv run python -m eval_harness validate` → 21 cases OK
+- `uv run python -m eval_harness run-offline-fixtures` → 13 fixtures OK
+- `yarn test` → **24 passed**; `tsc` / `vite build` → pass
+- No live OpenAI calls; no generated prompt activated; `.env` not opened
+
+### Known limitations
+
+- Lexical Jaccard miss on paraphrases; latency≠causation; judge bias; same-model eval limits; live path intentionally unused in CI
+
+### Next recommended step
+
+**Iteration 9:** operator-facing review UX / durable multi-process session store / authenticated export — without auto-deploy of prompts.

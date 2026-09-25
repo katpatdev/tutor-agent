@@ -108,11 +108,13 @@ Retrieval happens **only after** student input safety returns ALLOW. Safety redi
 
 Disconnect reports and SQLite metric rows are content-free. Transcripts require server enable + consent and are redacted before persistence. See `docs/SESSION_DATA.md`.
 
+## Learning flywheel privacy (Iteration 8)
+
+Historical transcript text (including redacted examples) is **never** sent to OpenAI for friction analysis or candidate generation. Live eval/optimizer calls are disabled by default and cannot include transcript fields. Prompt candidates cannot auto-weaken moderation; safety invariant checks run before any judge evaluation. See `docs/LEARNING_FLYWHEEL.md`.
+
 ## Production remaining work
 
 - Live load / latency measurement under real STT/LLM/TTS
-- Metrics persistence and operator dashboards
 - Teacher/admin override and audit workflow
 - Deployment hardening (auth, rate limits, regional crisis resources chosen by operators—not hardcoded here)
-- Transcript retention policy (later iteration)
 - Durable / authenticated knowledge storage beyond in-memory demo use

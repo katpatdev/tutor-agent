@@ -45,6 +45,8 @@ from knowledge_store import SHARED_KNOWLEDGE_STORE
 from lesson_protocol import LessonProtocolSession
 from moderation_service import OpenAIModerationClient, load_safety_config
 from presentation_runtime import (
+    ACTIVE_TUTOR_PROMPT_HASH,
+    ACTIVE_TUTOR_PROMPT_VERSION,
     BASE_TUTOR_PROMPT,
     TTS_INSTRUCTIONS,
     PresentationRuntime,
@@ -53,7 +55,7 @@ from retrieval_processor import RetrievalProcessor, SessionRetrievalState
 from safety_processors import InputSafetyProcessor, OutputSafetyProcessor
 from session_config import load_session_data_config
 from session_observability import SessionObservability
-from session_store import SessionStore, SessionStoreError
+from session_store import CURRICULUM_VERSION, SessionStore, SessionStoreError
 
 load_dotenv(override=True)
 
@@ -157,6 +159,9 @@ async def run_bot(websocket_client):
     observability = SessionObservability(
         config=SESSION_DATA_CONFIG,
         store=SHARED_SESSION_STORE,
+        tutor_prompt_version=ACTIVE_TUTOR_PROMPT_VERSION,
+        tutor_prompt_hash=ACTIVE_TUTOR_PROMPT_HASH,
+        curriculum_version=CURRICULUM_VERSION,
     )
     if SHARED_SESSION_STORE is None:
         observability.store_unavailable = True

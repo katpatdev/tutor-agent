@@ -28,10 +28,16 @@ class SessionObservability:
         config: SessionDataConfig,
         store: Optional[SessionStore] = None,
         collector: Optional[SessionMetricsCollector] = None,
+        tutor_prompt_version: Optional[str] = None,
+        tutor_prompt_hash: Optional[str] = None,
+        curriculum_version: Optional[str] = None,
     ) -> None:
         self.config = config
         self.store = store
         self.collector = collector or SessionMetricsCollector()
+        self.tutor_prompt_version = tutor_prompt_version
+        self.tutor_prompt_hash = tutor_prompt_hash
+        self.curriculum_version = curriculum_version
         self._transcript_events: List[TranscriptEventRecord] = []
         self._safety_events: List[SafetyEventRecord] = []
         self._rag_events: List[RagEventRecord] = []
@@ -254,6 +260,9 @@ class SessionObservability:
                 rag_events=self._rag_events,
                 persist_metrics=self.config.metrics_persistence_enabled,
                 persist_transcripts=self.collector.transcript_storage_active,
+                tutor_prompt_version=self.tutor_prompt_version,
+                tutor_prompt_hash=self.tutor_prompt_hash,
+                curriculum_version=self.curriculum_version,
             )
         except SessionStoreError:
             self.store_unavailable = True

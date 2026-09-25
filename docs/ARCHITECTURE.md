@@ -21,6 +21,10 @@
 | Transcript redaction | `transcript_redaction.py` | Deterministic PII-ish placeholders |
 | Session observability | `session_observability.py` | Narrow facade for metrics + optional persistence |
 | Session export CLI | `session_export.py` | Local sanitized JSONL export |
+| Prompt registry | `prompt_registry.py` + `prompts/` | Approved versioned tutor/judge prompts |
+| Friction / flywheel | `friction_analyzer.py`, `curriculum_recommendations.py`, `flywheel.py` | Local consented analysis (no OpenAI on transcripts) |
+| Prompt candidates | `prompt_workflow.py` | Reviewable candidates under `data/` (never auto-activate) |
+| Eval harness | `eval_llm.py`, `eval_harness.py`, `evals/` | Synthetic suite + offline fixtures + gated live |
 | Pipeline wiring | `agent.py` | Transport/STT/LLM/TTS, observer, RTVI message bridge, safety + retrieval + session lifecycle |
 | Frontend protocol | `frontend/lessonProtocol.ts` | Parse/create envelopes, sequence tracking (no DOM) |
 | Frontend knowledge | `frontend/knowledgeProtocol.ts` | Upload/status/retrieval parsing (no secrets) |
@@ -62,6 +66,15 @@ See `docs/SESSION_DATA.md`.
 - `session.ready` / `session.configure` handshake before lesson start.
 - Content-free metrics always collected in memory; optional SQLite persistence.
 - Redacted transcripts only with server enable **and** student consent.
+
+## Learning flywheel & evaluations (Iteration 8)
+
+See `docs/LEARNING_FLYWHEEL.md` and `docs/EVALUATIONS.md`.
+
+- Active tutor prompt loaded from `prompts/` registry (`TUTOR_PROMPT_VERSION`).
+- Session DB schema version **2** adds prompt/curriculum metadata (migrates from v1).
+- Friction analysis and recommendations are local/CLI-only (not a public HTTP API).
+- Prompt candidates and live LLM-as-judge runs never auto-deploy; human approval required.
 
 ## Protocol envelopes (version 1)
 

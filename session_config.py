@@ -19,7 +19,7 @@ class SessionDataConfig:
     session_db_path: str = "data/tutor_sessions.sqlite3"
     configuration_timeout_seconds: float = 5.0
     transcript_max_event_characters: int = 4000
-    schema_version: int = 1
+    schema_version: int = 2
 
     def validate(self) -> None:
         if self.session_retention_days < 1:
