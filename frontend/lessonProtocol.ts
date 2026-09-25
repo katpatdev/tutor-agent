@@ -30,6 +30,8 @@ export type LessonStateMessage = {
   can_pause: boolean;
   can_resume: boolean;
   can_navigate: boolean;
+  safety_status: 'normal' | 'redirecting' | 'hold';
+  safety_notice: string | null;
 };
 
 export type LessonCommandResultMessage = {
@@ -137,6 +139,16 @@ export function parseServerMessage(raw: unknown): LessonServerMessage | null {
     if (typeof raw.can_pause !== 'boolean') return null;
     if (typeof raw.can_resume !== 'boolean') return null;
     if (typeof raw.can_navigate !== 'boolean') return null;
+    if (
+      raw.safety_status !== 'normal' &&
+      raw.safety_status !== 'redirecting' &&
+      raw.safety_status !== 'hold'
+    ) {
+      return null;
+    }
+    if (!(raw.safety_notice === null || typeof raw.safety_notice === 'string')) {
+      return null;
+    }
     return raw as LessonStateMessage;
   }
 

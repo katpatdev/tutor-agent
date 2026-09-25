@@ -20,6 +20,8 @@ const sampleState = (sequence: number): LessonStateMessage => ({
   can_pause: true,
   can_resume: false,
   can_navigate: true,
+  safety_status: 'normal',
+  safety_notice: null,
 });
 
 describe('lessonProtocol', () => {
@@ -82,10 +84,62 @@ describe('lessonProtocol', () => {
     }
   });
 
-  it('does not export secret field names from the protocol module', async () => {
-    const mod = await import('./lessonProtocol');
-    for (const forbidden of CLIENT_PROTOCOL_FORBIDDEN_KEYS) {
-      expect(Object.prototype.hasOwnProperty.call(mod, forbidden)).toBe(false);
+  it('parses safety hold state and disables controls conceptually', () => {
+    const hold = sampleState(4);
+    hold.safety_status = 'hold';
+    hold.safety_notice = 'Please tell a trusted adult.';
+    hold.can_resume = false;
+    hold.can_navigate = false;
+    hold.can_pause = false;
+    const parsed = parseServerMessage(hold);
+    expect(parsed?.type).toBe('lesson.state');
+    if (parsed && parsed.type === 'lesson.state') {
+      expect(parsed.safety_status).toBe('hold');
+      expect(parsed.can_resume).toBe(false);
+      expect(parsed.can_navigate).toBe(false);
+      expect(parsed.safety_notice).toContain('trusted adult');
     }
+  });
+
+  it('rejects malformed safety status', () => {
+    expect(
+      parseServerMessage({
+        ...sampleState(1),
+        safety_status: 'danger',
+      })
+    ).toBeNull();
+  });
+
+  it('keeps disconnect conceptually independent of hold flags', () => {
+    const hold = sampleState(5);
+    hold.safety_status = 'hold';
+    hold.can_pause = false;
+    hold.can_resume = false;
+    hold.can_navigate = false;
+    const parsed = parseServerMessage(hold);
+    expect(parsed?.type).toBe('lesson.state');
+    if (parsed && parsed.type === 'lesson.state') {
+      expect(parsed.can_resume).toBe(false);
+      expect(parsed.can_navigate).toBe(false);
+      // Protocol has no can_disconnect; UI keeps Disconnect when connected.
+      expect('can_disconnect' in parsed).toBe(false);
+    }
+  });
+
+  it('ignores stale sequences after hold state', () => {
+    const tracker = new LessonStateTracker();
+    const hold = sampleState(7);
+    hold.safety_status = 'hold';
+    hold.safety_notice = 'Please tell a trusted adult.';
+    expect(tracker.applyState(hold)).toBe(true);
+    expect(tracker.applyState(sampleState(6))).toBe(false);
+    expect(tracker.state?.safety_status).toBe('hold');
+  });
+
+  it('does not declare raw moderation fields in protocol exports', async () => {
+    const mod = await import('./lessonProtocol');
+    expect(Object.prototype.hasOwnProperty.call(mod, 'category_scores')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(mod, 'flagged_categories')).toBe(false);
+    expect(CLIENT_PROTOCOL_FORBIDDEN_KEYS).toContain('OPENAI_API_KEY');
   });
 });

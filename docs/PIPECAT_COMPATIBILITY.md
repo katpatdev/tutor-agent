@@ -71,7 +71,26 @@ pcClient.sendClientMessage('lesson.command', commandEnvelope)
 
 Unchanged from Iteration 3: audible `BotStartedSpeaking`/`BotStoppedSpeaking` pairs; `UserStartedSpeaking` + `InterruptionFrame` for barge-in/pause; suppress cancelled stops.
 
+## Safety processors (Iteration 5)
+
+| Symbol | Installed module path | Role in tutor-agent |
+|--------|------------------------|---------------------|
+| `TranscriptionFrame` | `pipecat.frames.frames` | Final STT text moderated by `InputSafetyProcessor` |
+| `InterimTranscriptionFrame` | `pipecat.frames.frames` | Partials pass through; **not** moderated |
+| `LLMFullResponseStartFrame` / `LLMFullResponseEndFrame` | `pipecat.frames.frames` | Bound one complete LLM response for output buffering |
+| `LLMTextFrame` / `TextFrame` | `pipecat.frames.frames` | Candidate text held until moderated; released only if allowed |
+| `TTSSpeakFrame` | `pipecat.frames.frames` | Trusted safety templates and replacements toward TTS |
+| `SystemFrame` | `pipecat.frames.frames` | Passed through during buffering without releasing text |
+| `FrameProcessor` | `pipecat.processors.frame_processor` | Base for `InputSafetyProcessor` / `OutputSafetyProcessor` |
+
+Pipeline placement:
+
+`stt → input_safety → user aggregator → llm → output_safety → tts`
+
+OpenAI Moderation (SDK `openai==3.19.2`): `AsyncOpenAI.moderations.create(input=..., model=...)`. Default model: `omni-moderation-latest` (official Moderations guide + SDK `ModerationModel` literal).
+
 ## Still requires a real OpenAI session to verify
 
 - End-to-end audio quality and live control timing under real TTS load
 - Exact audible/byte resume (not implemented; logical cursor only)
+- Live moderation latency under production network conditions

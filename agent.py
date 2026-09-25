@@ -39,13 +39,18 @@ from pipecat.transports.websocket.fastapi import (
 
 from curriculum import slide_prompts
 from lesson_protocol import LessonProtocolSession
+from moderation_service import OpenAIModerationClient, load_safety_config
 from presentation_runtime import (
     BASE_TUTOR_PROMPT,
     TTS_INSTRUCTIONS,
     PresentationRuntime,
 )
+from safety_processors import InputSafetyProcessor, OutputSafetyProcessor
 
 load_dotenv(override=True)
+
+# Validate non-secret safety configuration at import/startup.
+SAFETY_CONFIG = load_safety_config()
 
 
 class LessonLifecycleObserver(BaseObserver):
@@ -80,21 +85,22 @@ async def run_bot(websocket_client):
     )
 
     messages = [{"role": "system", "content": BASE_TUTOR_PROMPT}]
+    api_key = os.getenv("OPENAI_API_KEY")
 
     stt = OpenAIRealtimeSTTService(
-        api_key=os.getenv("OPENAI_API_KEY"),
+        api_key=api_key,
         model="gpt-4o-transcribe",
     )
 
     tts = OpenAITTSService(
-        api_key=os.getenv("OPENAI_API_KEY"),
+        api_key=api_key,
         model="gpt-4o-mini-tts",
         voice="alloy",
         instructions=TTS_INSTRUCTIONS,
     )
 
     llm = OpenAILLMService(
-        api_key=os.getenv("OPENAI_API_KEY"),
+        api_key=api_key,
         model="gpt-4o",
     )
 
@@ -113,18 +119,6 @@ async def run_bot(websocket_client):
         ),
     )
 
-    pipeline = Pipeline(
-        [
-            ws_transport.input(),
-            stt,
-            context_aggregator.user(),
-            llm,
-            tts,
-            ws_transport.output(),
-            context_aggregator.assistant(),
-        ]
-    )
-
     runtime_holder: dict = {}
 
     class _TaskFrameSink:
@@ -135,6 +129,36 @@ async def run_bot(websocket_client):
     runtime = PresentationRuntime(
         slide_prompts=slide_prompts(),
         frame_sink=_TaskFrameSink(),
+    )
+
+    moderation_client = OpenAIModerationClient(
+        api_key=api_key,
+        model=SAFETY_CONFIG.moderation_model,
+        timeout_seconds=SAFETY_CONFIG.timeout_seconds,
+    )
+    input_safety = InputSafetyProcessor(
+        runtime=runtime,
+        moderation_client=moderation_client,
+        config=SAFETY_CONFIG,
+    )
+    output_safety = OutputSafetyProcessor(
+        runtime=runtime,
+        moderation_client=moderation_client,
+        config=SAFETY_CONFIG,
+    )
+
+    pipeline = Pipeline(
+        [
+            ws_transport.input(),
+            stt,
+            input_safety,
+            context_aggregator.user(),
+            llm,
+            output_safety,
+            tts,
+            ws_transport.output(),
+            context_aggregator.assistant(),
+        ]
     )
 
     async def send_outbound(message: dict) -> None:

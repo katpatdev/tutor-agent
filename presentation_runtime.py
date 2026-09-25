@@ -24,14 +24,24 @@ from lesson_controller import (
     NarrationCursor,
     TransitionResult,
 )
+from safety_policy import (
+    PolicyDecision,
+    SafetyDecision,
+    SafetyEvent,
+    SafetyStatus,
+    TEMPLATES,
+    template_text,
+)
 
 BASE_TUTOR_PROMPT = (
-    "You are a patient and encouraging science tutor teaching students about "
-    "natural disasters. Use clear, age-appropriate language. Explain one concept "
-    "at a time. When a student interrupts with a question, answer briefly and "
-    "clearly, then return to the lesson when instructed. If you are unsure of a "
-    "fact, say so instead of inventing information. Avoid graphic or sensational "
-    "descriptions of harm, injury, or destruction."
+    "You are a patient, encouraging science tutor for school students learning about "
+    "natural disasters. Use calm, simple, age-appropriate language. Explain one idea at "
+    "a time with clear science. Avoid graphic, sensational, or frightening details; focus "
+    "on what happens and how people prepare and stay safer. If a student feels scared, "
+    "acknowledge the feeling without dismissing it and suggest talking with a trusted adult "
+    "when needed. Never give self-harm, violence, sexual, or dangerous instructions. Do not "
+    "pretend to be a doctor, emergency responder, or therapist. If unsure of a fact, say so. "
+    "After ordinary side questions, return naturally to the lesson when asked."
 )
 
 QA_TRANSITION_PROMPT = (
@@ -56,6 +66,8 @@ class OutputPurpose(Enum):
     INTERRUPTION_ANSWER = auto()
     QA_TRANSITION = auto()
     QA_RESPONSE = auto()
+    SAFETY_REDIRECT = auto()
+    SAFETY_MESSAGE = auto()
 
 
 class FrameSink(Protocol):
@@ -106,10 +118,36 @@ class PresentationRuntime:
         self._presented_slide_instructions: set[int] = set()
         self._lock = asyncio.Lock()
         self._on_state_changed = on_state_changed
+        self._safety_status = SafetyStatus.NORMAL
+        self._safety_notice: Optional[str] = None
+        self._safety_events: List[SafetyEvent] = []
 
         # Factories allow offline tests without importing Pipecat frames.
         self._interruption_frame_factory = interruption_frame_factory
         self._messages_append_frame_factory = messages_append_frame_factory
+        self._tts_speak_frame_factory = None
+
+    def set_tts_speak_frame_factory(self, factory) -> None:
+        self._tts_speak_frame_factory = factory
+
+    @property
+    def safety_status(self) -> SafetyStatus:
+        return self._safety_status
+
+    @property
+    def safety_notice(self) -> Optional[str]:
+        return self._safety_notice
+
+    @property
+    def safety_events(self) -> List[SafetyEvent]:
+        return list(self._safety_events)
+
+    @property
+    def session_ended(self) -> bool:
+        return self._session_ended
+
+    def record_safety_event(self, event: SafetyEvent) -> None:
+        self._safety_events.append(event)
 
     def set_on_state_changed(self, callback: Optional[StateChangedCallback]) -> None:
         self._on_state_changed = callback
@@ -117,6 +155,15 @@ class PresentationRuntime:
     async def _notify_state_changed(self) -> None:
         if self._on_state_changed is not None:
             await self._on_state_changed()
+
+    async def _queue_tts_speak(self, text: str) -> None:
+        if self._tts_speak_frame_factory is not None:
+            frame = self._tts_speak_frame_factory(text=text)
+        else:
+            from pipecat.frames.frames import TTSSpeakFrame
+
+            frame = TTSSpeakFrame(text=text)
+        await self._frame_sink.queue_frames([frame])
 
     @property
     def state(self) -> LessonState:
@@ -289,6 +336,24 @@ class PresentationRuntime:
             self._utterance_audible = False
 
             purpose = self._output_purpose
+            if purpose is OutputPurpose.SAFETY_REDIRECT:
+                self._output_purpose = OutputPurpose.NONE
+                self._safety_status = SafetyStatus.NORMAL
+                self._safety_notice = None
+                if self._controller.state.mode is LessonMode.ANSWERING:
+                    await self._dispatch(
+                        LessonEvent(
+                            type=LessonEventType.ANSWER_COMPLETED,
+                            event_id=self._new_event_id("safety-redirect-done"),
+                        )
+                    )
+                else:
+                    await self._notify_state_changed()
+                return
+            if purpose is OutputPurpose.SAFETY_MESSAGE:
+                self._output_purpose = OutputPurpose.NONE
+                await self._notify_state_changed()
+                return
             if purpose in {OutputPurpose.SLIDE_NARRATION, OutputPurpose.RESUMED_NARRATION}:
                 slide = self._controller.state.cursor.slide_index
                 utterance = self._active_utterance_id
@@ -312,6 +377,8 @@ class PresentationRuntime:
 
     async def on_user_started_speaking(self) -> None:
         async with self._lock:
+            if self._safety_status is SafetyStatus.HOLD:
+                return
             if self._controller.state.mode is not LessonMode.PRESENTING:
                 return
             if self._output_purpose not in {
@@ -340,8 +407,60 @@ class PresentationRuntime:
                 )
             )
 
+    async def handle_blocked_user_input(self, decision: PolicyDecision) -> None:
+        """Handle REDIRECT or SAFETY_HOLD after input moderation (no transcript release)."""
+        async with self._lock:
+            text = (
+                template_text(decision.template_key)
+                if decision.template_key
+                else TEMPLATES["moderation_unavailable"]
+            )
+            notice = decision.notice or text
+            self._suppress_next_bot_stopped = self._bot_speaking or (
+                self._output_purpose is not OutputPurpose.NONE
+            )
+            if self._suppress_next_bot_stopped:
+                await self._queue_interruption()
+
+            if decision.decision is SafetyDecision.SAFETY_HOLD:
+                self._safety_status = SafetyStatus.HOLD
+                self._safety_notice = notice
+                self._output_purpose = OutputPurpose.SAFETY_MESSAGE
+                if self._controller.state.mode is not LessonMode.PAUSED:
+                    if self._controller.state.mode in {
+                        LessonMode.PRESENTING,
+                        LessonMode.INTERRUPTED,
+                        LessonMode.ANSWERING,
+                        LessonMode.QA_MODE,
+                    }:
+                        await self._dispatch(
+                            LessonEvent(
+                                type=LessonEventType.PAUSE_REQUESTED,
+                                event_id=self._new_event_id("safety-hold-pause"),
+                                cursor=self._logical_cursor(),
+                            )
+                        )
+                await self._queue_tts_speak(text)
+                await self._notify_state_changed()
+                return
+
+            # REDIRECT
+            self._safety_status = SafetyStatus.REDIRECTING
+            self._safety_notice = notice
+            self._output_purpose = OutputPurpose.SAFETY_REDIRECT
+            self._active_utterance_id += 1
+            self._utterance_audible = False
+            await self._queue_tts_speak(text)
+            await self._notify_state_changed()
+
     async def pause(self, cursor: Optional[NarrationCursor] = None) -> TransitionResult:
         async with self._lock:
+            if self._safety_status is SafetyStatus.HOLD:
+                raise InvalidLessonTransition(
+                    "Pause is not available during a safety hold",
+                    mode=self._controller.state.mode,
+                    event_type=LessonEventType.PAUSE_REQUESTED,
+                )
             return await self._dispatch(
                 LessonEvent(
                     type=LessonEventType.PAUSE_REQUESTED,
@@ -352,6 +471,12 @@ class PresentationRuntime:
 
     async def resume(self) -> TransitionResult:
         async with self._lock:
+            if self._safety_status is SafetyStatus.HOLD:
+                raise InvalidLessonTransition(
+                    "Resume is not available during a safety hold",
+                    mode=self._controller.state.mode,
+                    event_type=LessonEventType.RESUME_REQUESTED,
+                )
             return await self._dispatch(
                 LessonEvent(
                     type=LessonEventType.RESUME_REQUESTED,
@@ -361,6 +486,12 @@ class PresentationRuntime:
 
     async def go_to_slide(self, slide_index: int) -> TransitionResult:
         async with self._lock:
+            if self._safety_status is SafetyStatus.HOLD:
+                raise InvalidLessonTransition(
+                    "Slide navigation is not available during a safety hold",
+                    mode=self._controller.state.mode,
+                    event_type=LessonEventType.GOTO_SLIDE_REQUESTED,
+                )
             state = self._controller.state
             if state.mode not in {LessonMode.PRESENTING, LessonMode.QA_MODE}:
                 raise InvalidLessonTransition(

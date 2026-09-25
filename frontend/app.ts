@@ -39,6 +39,7 @@ class WebsocketClientApp {
   private slideSpan: HTMLElement | null = null;
   private titleSpan: HTMLElement | null = null;
   private errorBox: HTMLElement | null = null;
+  private safetyNotice: HTMLElement | null = null;
   private debugLog: HTMLElement | null = null;
   private botAudio: HTMLAudioElement;
   private stateTracker = new LessonStateTracker();
@@ -72,6 +73,7 @@ class WebsocketClientApp {
     this.slideSpan = document.getElementById('lesson-slide');
     this.titleSpan = document.getElementById('lesson-title');
     this.errorBox = document.getElementById('command-error');
+    this.safetyNotice = document.getElementById('safety-notice');
     this.debugLog = document.getElementById('debug-log');
   }
 
@@ -133,6 +135,9 @@ class WebsocketClientApp {
     }
     if (this.slideSelect) {
       this.slideSelect.value = String(state.slide.number);
+    }
+    if (this.safetyNotice) {
+      this.safetyNotice.textContent = state.safety_notice || '';
     }
     this.applyControlAvailability(state);
   }

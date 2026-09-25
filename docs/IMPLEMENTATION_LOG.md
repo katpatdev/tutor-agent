@@ -519,3 +519,100 @@ What has not been implemented (by design for Iteration 1):
 ### Next recommended step
 
 **Iteration 5:** Disconnect metrics report + stronger underage guardrails and/or knowledge ingestion—scoped separately from transcript flywheel unless required together.
+
+---
+
+## Iteration 5: Age-appropriate student safety guardrails
+
+- Date: 2026-09-25
+- Objective: Add OpenAI Moderation–backed input/output safety with deterministic ALLOW / REDIRECT / SAFETY_HOLD policy, protocol/UI safety status, and offline tests using fake moderation only. No RAG, transcript persistence, flywheel, production metrics, or live OpenAI calls in validation.
+- Starting commit: `ace2f984ee429ffc7b59e0d1acc280e21025e8fc` (`feat: add lesson controls and frontend synchronization`)
+- Starting Git status: dirty working tree from Iteration 5 in-progress edits (not committed).
+
+### Before (baseline recorded before Iter5 edits)
+
+- `uv run pytest -q` → **55 passed**
+- Frontend: **8** Vitest tests passing; `tsc --noEmit` and `vite build` clean
+- Pipecat **1.11.0**; OpenAI SDK already present transitively via `pipecat-ai[openai]`
+- No moderation processors; prompt-only tutor guidance
+
+### OpenAI SDK / Moderations API inspection
+
+- Installed SDK: **openai==3.19.2**
+- Async client: `openai.AsyncOpenAI`
+- Method: `await client.moderations.create(input=..., model=...)`
+- Response: `ModerationCreateResponse` with `results[]`; each result has `flagged`, `categories`, `category_scores` (and related fields)
+- Category access via attribute / `model_dump()` on `Categories` / `CategoryScores`
+- Timeout: application wraps call in `asyncio.wait_for`; maps `TimeoutError` → `ModerationTimeout`; other errors → `ModerationUnavailable`; `CancelledError` re-raised
+- Model selection evidence:
+  - Official OpenAI Moderations guide / models page: **`omni-moderation-latest`**
+  - SDK `ModerationModel` literal includes `omni-moderation-latest`, `omni-moderation-2024-09-26`, legacy text-moderation aliases
+- Config (non-secret, `.env.example`): `OPENAI_MODERATION_MODEL`, `MODERATION_TIMEOUT_SECONDS`, `MODERATION_MAX_CHARACTERS` — validated at startup via `load_safety_config()`
+
+### Files created
+
+- `moderation_service.py` — `ModerationResult` / client protocol / `OpenAIModerationClient` / `FakeModerationClient` / config
+- `safety_policy.py` — decisions, templates, local distress/danger detector, in-memory `SafetyEvent`
+- `safety_processors.py` — `InputSafetyProcessor`, `OutputSafetyProcessor`
+- `tests/test_safety.py` — deterministic fake-client coverage
+- `docs/SAFETY.md` — threat model, flows, privacy, latency tradeoff, limitations
+
+### Files modified
+
+- `agent.py` — pipeline places input safety after STT and output safety before TTS; loads safety config
+- `presentation_runtime.py` — safety status, redirect/hold handlers, SAFETY_* output purposes, strengthened `BASE_TUTOR_PROMPT`
+- `lesson_protocol.py` — `safety_status` / `safety_notice`; hold disables pause/resume/navigate flags
+- `frontend/lessonProtocol.ts`, `lessonProtocol.test.ts`, `app.ts`, `index.html`, `style.css` — parse/render notice; stale sequence unchanged
+- `.env.example` — moderation model/timeout/max chars
+- `docs/ARCHITECTURE.md`, `docs/PIPECAT_COMPATIBILITY.md`, `docs/IMPLEMENTATION_LOG.md` (this entry)
+
+### Placement
+
+- **Input:** after final STT `TranscriptionFrame`, before user context aggregator / LLM
+- **Output:** after LLM, before TTS; buffers one full `LLMFullResponse*` cycle; trusted `TTSSpeakFrame` templates bypass LLM gating
+
+### Policy decisions
+
+- `ALLOW` — educational / ordinary fear (calm answer)
+- `REDIRECT` — graphic/inappropriate (template + logical resume)
+- `SAFETY_HOLD` — self-harm, immediate danger, sexual_minors, unknown flag, timeout, unavailable, oversized; no auto-resume; Resume/nav rejected
+
+### Timeout / failure
+
+Fail closed. No truncated approve. Disconnected/ended session ignores late moderation results.
+
+### Latency tradeoff
+
+Full LLM response must complete and be moderated before any of that response reaches TTS (moderation RTT + buffer wait). Documented in `docs/SAFETY.md`.
+
+### Tests added
+
+- Backend: `tests/test_safety.py` (input allow/block/dedupe/partials, redirect resume, hold gates, timeout/exception/oversized, output allow/block/oversized, protocol/state privacy, session isolation, cancel-after-end, control frames not moderated)
+- Frontend: safety status parse/reject, hold flags, stale sequence, no raw moderation fields in types
+
+### Validation results (after Iter5)
+
+- `uv run pytest -q` → **82 passed**
+- `uv run python -m compileall …` → success
+- `uv run python -c "import main, agent, moderation_service, safety_policy; …"` → `backend imports passed`
+- `yarn test` → **12 passed**
+- `yarn tsc --noEmit` → pass
+- `yarn vite build` → pass
+- `POST /connect` → `{"ws_url":"ws://127.0.0.1:7860/ws"}` (HTTP 200); **`/ws` not opened**
+- `git diff --check` → clean
+- `git grep OPENAI_API_KEY` → only expected config/docs/forbidden-key lists / `os.getenv` (no secret values)
+- No `print`/`logger`/`logging` of transcripts in `*.py`
+- **No live OpenAI Moderation/STT/LLM/TTS calls during automated tests or `/connect` smoke**
+- **`.env` was not opened, printed, or copied by the agent**
+
+### Known limitations
+
+- Moderation false positives/negatives; local regex is not a full safety system
+- Prompt instructions remain advisory only
+- Output buffering adds latency
+- Safety events are in-memory only (no persistence yet)
+- No teacher override / production metrics / deployment hardening in this iteration
+
+### Next recommended step
+
+Iteration 6 candidates per product plan: RAG / knowledge ingestion, transcript persistence + learning flywheel, and/or production metrics—keeping OpenAI as sole external AI provider.

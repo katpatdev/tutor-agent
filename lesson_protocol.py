@@ -64,7 +64,16 @@ def build_ws_url(*, scheme: str, host: str, path: str = "/ws") -> str:
     return f"{ws_scheme}://{host}{path}"
 
 
-def control_availability(state: LessonState) -> Dict[str, bool]:
+def control_availability(
+    state: LessonState, *, safety_status: str = "normal"
+) -> Dict[str, bool]:
+    if safety_status == "hold":
+        return {
+            "paused": True,
+            "can_pause": False,
+            "can_resume": False,
+            "can_navigate": False,
+        }
     paused = state.mode is LessonMode.PAUSED
     can_pause = state.mode in {
         LessonMode.PRESENTING,
@@ -74,6 +83,10 @@ def control_availability(state: LessonState) -> Dict[str, bool]:
     }
     can_resume = paused
     can_navigate = state.mode in {LessonMode.PRESENTING, LessonMode.QA_MODE}
+    if safety_status == "redirecting":
+        can_pause = False
+        can_resume = False
+        can_navigate = False
     return {
         "paused": paused,
         "can_pause": can_pause,
@@ -82,9 +95,15 @@ def control_availability(state: LessonState) -> Dict[str, bool]:
     }
 
 
-def build_state_message(state: LessonState, *, sequence: int) -> Dict[str, Any]:
+def build_state_message(
+    state: LessonState,
+    *,
+    sequence: int,
+    safety_status: str = "normal",
+    safety_notice: Optional[str] = None,
+) -> Dict[str, Any]:
     index = state.cursor.slide_index
-    flags = control_availability(state)
+    flags = control_availability(state, safety_status=safety_status)
     return {
         "type": MSG_STATE,
         "version": PROTOCOL_VERSION,
@@ -100,6 +119,8 @@ def build_state_message(state: LessonState, *, sequence: int) -> Dict[str, Any]:
         "can_pause": flags["can_pause"],
         "can_resume": flags["can_resume"],
         "can_navigate": flags["can_navigate"],
+        "safety_status": safety_status,
+        "safety_notice": safety_notice,
     }
 
 
@@ -224,7 +245,12 @@ class LessonProtocolSession:
 
     async def publish_state(self) -> Dict[str, Any]:
         self._sequence += 1
-        message = build_state_message(self._runtime.state, sequence=self._sequence)
+        message = build_state_message(
+            self._runtime.state,
+            sequence=self._sequence,
+            safety_status=self._runtime.safety_status.value,
+            safety_notice=self._runtime.safety_notice,
+        )
         await self._send_outbound(wrap_rtvi_server_message(message))
         return message
 
