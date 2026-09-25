@@ -6,7 +6,8 @@
 |-------|--------|------|
 | Curriculum metadata | `curriculum.py` | Slide index ↔ title ↔ prompt (8 slides) |
 | Deterministic control | `lesson_controller.py` | Mode, cursor, transitions, duplicate event IDs |
-| Runtime adapter | `presentation_runtime.py` | Per-session controller, output purpose, safety status gate, Pipecat effects, **per-session asyncio.Lock** |
+| Narration plans | `narration_plan.py` | Deterministic segmentation, generation IDs, segment progress, resume-accuracy contract |
+| Runtime adapter | `presentation_runtime.py` | Per-session controller, narration plan lifecycle, output purpose, safety status gate, Pipecat effects, **per-session asyncio.Lock** |
 | Control protocol | `lesson_protocol.py` | Validate commands, dedupe `request_id`, state snapshots, WS URL helper |
 | Moderation abstraction | `moderation_service.py` | OpenAI Moderations client + normalized `ModerationResult` (no raw text stored) |
 | Safety policy | `safety_policy.py` | ALLOW / REDIRECT / SAFETY_HOLD, templates, in-memory safety events |
@@ -76,10 +77,25 @@ See `docs/LEARNING_FLYWHEEL.md` and `docs/EVALUATIONS.md`.
 - Friction analysis and recommendations are local/CLI-only (not a public HTTP API).
 - Prompt candidates and live LLM-as-judge runs never auto-deploy; human approval required.
 
+## Segment-level narration (Iteration 9)
+
+See `docs/RESUME_ACCURACY.md` and `docs/LIVE_TEST_PLAN.md`.
+
+1. Output safety approves one complete slide-narration response.
+2. `accept_approved_narration` creates a deterministic, generation-scoped plan.
+3. The runtime queues one `TTSSpeakFrame` segment at a time.
+4. An audible bot-stop completes only the active segment. Only the final
+   segment dispatches `SLIDE_COMPLETED`.
+5. Pause/barge-in replays an interrupted segment from its beginning. Navigation
+   invalidates the old generation.
+
+Exact browser playback offsets are unavailable. The supported and reported
+resume accuracy is **segment-level**, never exact word/audio-byte resume.
+
 ## Protocol envelopes (version 1)
 
 - `lesson.command` — client→server (`pause` | `resume` | `goto_slide` | `get_state`)
-- `lesson.state` — server→client snapshot (mode, slide, flags, `safety_status`, `safety_notice`)
+- `lesson.state` — server→client snapshot (mode, slide, flags, safety metadata, and content-free narration progress)
 - `lesson.command_result` — ack / structured error tied to `request_id`
 
 Slide indexes in the protocol are **zero-based**. UI displays one-based numbers.
@@ -101,7 +117,9 @@ Monotonic `sequence` per WebSocket session. Frontend `LessonStateTracker` ignore
 ## Pause / resume / navigation
 
 - **Pause:** runtime pause → `InterruptionFrame` + suppress cancelled bot-stop → publish state. Logical cursor preserved.
-- **Resume:** restore prior mode; continue from **logical** cursor (not audio-byte resume). Rejected during safety hold.
+- **Resume:** restore prior mode; replay an interrupted narration segment or
+  continue the next pending segment. This is deterministic segment-level
+  resume, not exact playback-offset resume. Rejected during safety hold.
 - **Goto:** validate transition first; stop narration with suppression; present requested slide. Rejected during safety hold.
 - **get_state:** ack + snapshot; no mutation.
 
@@ -115,9 +133,8 @@ Connect/Disconnect, Pause/Resume, slide selector (1–8) + Go to Slide, `aria-li
 
 ## Remaining limitations
 
-- Logical resume only (not audio-byte)
+- Segment-level resume only (not exact playback-offset/word/audio-byte resume)
 - In-memory RAG only (lost on restart; not multi-worker)
 - Local SQLite session store is demo-grade (not multi-tenant auth)
-- Learning flywheel / LLM-as-judge not implemented yet
 - Output TTS waits for full LLM response + moderation (latency tradeoff)
-- Live OpenAI e2e control timing not validated in offline CI
+- **LIVE OPENAI VALIDATION NOT RUN**; real audio quality and control timing remain unverified

@@ -5,8 +5,10 @@ import {
   createPauseCommand,
   createRequestId,
   createResumeCommand,
+  formatNarrationStatus,
   LessonStateTracker,
   parseServerMessage,
+  type NarrationProgress,
   type LessonStateMessage,
 } from './lessonProtocol';
 
@@ -30,6 +32,63 @@ describe('lessonProtocol', () => {
     expect(parsed?.type).toBe('lesson.state');
   });
 
+  it('parses valid narration progress', () => {
+    const parsed = parseServerMessage({
+      ...sampleState(2),
+      narration: {
+        current_segment: 2,
+        total_segments: 4,
+        resume_accuracy: 'segment',
+      },
+    });
+    expect(parsed?.type).toBe('lesson.state');
+    if (parsed?.type === 'lesson.state') {
+      expect(parsed.narration).toEqual({
+        current_segment: 2,
+        total_segments: 4,
+        resume_accuracy: 'segment',
+      });
+    }
+  });
+
+  it('rejects malformed narration and narration text leaks', () => {
+    const base = sampleState(3);
+    expect(
+      parseServerMessage({
+        ...base,
+        narration: { total_segments: 2, resume_accuracy: 'segment' },
+      })
+    ).toBeNull();
+    expect(
+      parseServerMessage({
+        ...base,
+        narration: { current_segment: 1, resume_accuracy: 'segment' },
+      })
+    ).toBeNull();
+    expect(
+      parseServerMessage({
+        ...base,
+        narration: {
+          current_segment: 1,
+          total_segments: 2,
+          resume_accuracy: 'segment',
+          text: 'private narration',
+        },
+      })
+    ).toBeNull();
+    expect(
+      parseServerMessage({
+        ...base,
+        narration: {
+          current_segment: 1,
+          total_segments: 2,
+          resume_accuracy: 'segment',
+          segment_text: 'private narration',
+        },
+      })
+    ).toBeNull();
+  });
+
   it('rejects malformed messages', () => {
     expect(parseServerMessage(null)).toBeNull();
     expect(parseServerMessage({ type: 'lesson.state', version: 2 })).toBeNull();
@@ -43,6 +102,40 @@ describe('lessonProtocol', () => {
     expect(tracker.applyState(sampleState(2))).toBe(false);
     expect(tracker.applyState(sampleState(3))).toBe(true);
     expect(tracker.sequence).toBe(3);
+  });
+
+  it('rejects stale narration state through the existing tracker', () => {
+    const tracker = new LessonStateTracker();
+    const current = {
+      ...sampleState(10),
+      narration: {
+        current_segment: 3,
+        total_segments: 4,
+        resume_accuracy: 'segment' as const,
+      },
+    };
+    const stale = {
+      ...sampleState(9),
+      narration: {
+        current_segment: 1,
+        total_segments: 4,
+        resume_accuracy: 'segment' as const,
+      },
+    };
+    expect(tracker.applyState(current)).toBe(true);
+    expect(tracker.applyState(stale)).toBe(false);
+    expect(tracker.state?.narration?.current_segment).toBe(3);
+  });
+
+  it('formats one-based segment progress without claiming exact resume', () => {
+    const status = formatNarrationStatus({
+      current_segment: 2,
+      total_segments: 4,
+      resume_accuracy: 'segment',
+    });
+    expect(status).toContain('Narration segment 2 of 4');
+    expect(status).toContain('segment-level');
+    expect(status.toLowerCase()).not.toContain('exact');
   });
 
   it('creates pause and resume commands', () => {
@@ -141,5 +234,14 @@ describe('lessonProtocol', () => {
     expect(Object.prototype.hasOwnProperty.call(mod, 'category_scores')).toBe(false);
     expect(Object.prototype.hasOwnProperty.call(mod, 'flagged_categories')).toBe(false);
     expect(CLIENT_PROTOCOL_FORBIDDEN_KEYS).toContain('OPENAI_API_KEY');
+  });
+
+  it('declares no narration text fields in client protocol types', () => {
+    type HasText = 'text' extends keyof NarrationProgress ? true : false;
+    type HasSegmentText = 'segment_text' extends keyof NarrationProgress ? true : false;
+    const hasText: HasText = false;
+    const hasSegmentText: HasSegmentText = false;
+    expect(hasText).toBe(false);
+    expect(hasSegmentText).toBe(false);
   });
 });

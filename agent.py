@@ -51,6 +51,7 @@ from presentation_runtime import (
     TTS_INSTRUCTIONS,
     PresentationRuntime,
 )
+from narration_plan import load_narration_max_characters
 from retrieval_processor import RetrievalProcessor, SessionRetrievalState
 from safety_processors import InputSafetyProcessor, OutputSafetyProcessor
 from session_config import load_session_data_config
@@ -63,6 +64,7 @@ load_dotenv(override=True)
 SAFETY_CONFIG = load_safety_config()
 RAG_CONFIG = load_rag_config()
 SESSION_DATA_CONFIG = load_session_data_config()
+NARRATION_MAX_CHARACTERS = load_narration_max_characters()
 
 try:
     SHARED_SESSION_STORE: SessionStore | None = SessionStore(SESSION_DATA_CONFIG)
@@ -174,6 +176,7 @@ async def run_bot(websocket_client):
     runtime = PresentationRuntime(
         slide_prompts=slide_prompts(),
         frame_sink=_TaskFrameSink(),
+        narration_max_characters=NARRATION_MAX_CHARACTERS,
     )
     runtime.set_observability(observability)
 

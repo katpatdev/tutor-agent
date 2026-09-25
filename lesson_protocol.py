@@ -105,10 +105,11 @@ def build_state_message(
     sequence: int,
     safety_status: str = "normal",
     safety_notice: Optional[str] = None,
+    narration: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     index = state.cursor.slide_index
     flags = control_availability(state, safety_status=safety_status)
-    return {
+    message: Dict[str, Any] = {
         "type": MSG_STATE,
         "version": PROTOCOL_VERSION,
         "sequence": sequence,
@@ -126,6 +127,9 @@ def build_state_message(
         "safety_status": safety_status,
         "safety_notice": safety_notice,
     }
+    if narration is not None:
+        message["narration"] = narration
+    return message
 
 
 def build_command_result(
@@ -338,11 +342,18 @@ class LessonProtocolSession:
 
     async def publish_state(self) -> Dict[str, Any]:
         self._sequence += 1
+        narration = self._runtime.narration_progress
+        if self._runtime.narration_error:
+            narration = {
+                **(narration or {"current_segment": 0, "total_segments": 0, "resume_accuracy": "segment"}),
+                "error": self._runtime.narration_error,
+            }
         message = build_state_message(
             self._runtime.state,
             sequence=self._sequence,
             safety_status=self._runtime.safety_status.value,
             safety_notice=self._runtime.safety_notice,
+            narration=narration,
         )
         await self._send_outbound(wrap_rtvi_server_message(message))
         return message

@@ -39,9 +39,16 @@ def make_runtime(
     return runtime, sink
 
 
-async def narrate_current_slide(runtime: PresentationRuntime) -> None:
-    await runtime.on_bot_started_speaking()
-    await runtime.on_bot_stopped_speaking()
+async def narrate_current_slide(
+    runtime: PresentationRuntime, text: str = "First sentence. Second sentence."
+) -> None:
+    """Approve segmented narration then drive bot lifecycle for every segment."""
+    await runtime.accept_approved_narration(text)
+    plan = runtime.narration_plan
+    total = plan.total_segments if plan is not None else 1
+    for _ in range(total):
+        await runtime.on_bot_started_speaking()
+        await runtime.on_bot_stopped_speaking()
 
 
 def test_01_one_controller_per_session() -> None:
@@ -90,8 +97,7 @@ def test_05_duplicate_completion_does_not_skip_slide() -> None:
     async def _run() -> None:
         runtime, _ = make_runtime()
         await runtime.start_session()
-        await runtime.on_bot_started_speaking()
-        await runtime.on_bot_stopped_speaking()
+        await narrate_current_slide(runtime)
         assert runtime.state.cursor.slide_index == 1
         await runtime.on_bot_stopped_speaking()
         assert runtime.state.cursor.slide_index == 1

@@ -185,6 +185,11 @@ data/prompt_candidates/
 data/eval_reports/
 *.local-redacted-appendix.json
 
+# Manual live-test reports (Iteration 9)
+data/live_tests/
+live_test_report*.json
+live_test_report*.md
+
 # Spyder project settings
 .spyderproject
 .spyproject

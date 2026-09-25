@@ -777,3 +777,135 @@ Local friction analysis on consented redacted history, reviewable curriculum rec
 ### Next recommended step
 
 **Iteration 9:** operator-facing review UX / durable multi-process session store / authenticated export — without auto-deploy of prompts.
+
+---
+
+## Iteration 9: Segment-level narration runtime
+
+- Date: 2026-09-25
+- Objective: Replace whole-slide playback completion with deterministic, generation-scoped narration segments and segment-level resume. Preserve runtime/controller, safety, frame factory, and observability APIs. No OpenAI calls.
+- Starting commit: `655df62`
+- Starting Git status: `narration_plan.py` was already untracked; no tracked modifications were present.
+
+### Before
+
+- `PresentationRuntime` treated each approved LLM response as one TTS utterance and advanced the slide after one audible bot-stop event.
+- Resume requested a new LLM continuation because playback offsets and segment checkpoints were unavailable.
+- `narration_plan.py` already provided deterministic segmentation and generation/progress structures.
+
+### Changes made
+
+- Rewrote `presentation_runtime.py` to own narration plans, generation IDs, active segment state, safe narration errors, test-visible metrics, and one-based public progress.
+- Approved narration now becomes deterministic `TTSSpeakFrame` segments; only the final completed segment dispatches `SLIDE_COMPLETED`.
+- Pause/interruption preserves the plan and replays an interrupted segment; a pause between segments resumes at the next pending segment.
+- Navigation and session end invalidate plans. Stale/cancelled completions cannot advance a slide.
+- Retained safety redirect/hold behavior, controller dispatch, state callbacks, observability hooks, and public test frame helpers.
+- Added `RecordingFrameSink.tts_texts`.
+
+### Commands executed
+
+- Required import check: `uv run python -c "from presentation_runtime import PresentationRuntime, BASE_TUTOR_PROMPT; print(len(BASE_TUTOR_PROMPT))"`
+- Compile check: `uv run python -m py_compile presentation_runtime.py narration_plan.py`
+- Inline offline segment smoke covering plan creation, two segment completions, pause, replay, metrics, and slide advancement
+- `uv run pytest -q tests/test_presentation_runtime.py`
+
+### Dependency changes
+
+- None.
+
+### Validation results
+
+- Required import check passed and printed `842`.
+- Compile check passed.
+- IDE lint diagnostics: no errors.
+- Segment runtime smoke passed.
+- Existing presentation runtime suite: **12 passed, 8 failed**. The failures are legacy tests that synthesize bot start/stop without first calling `accept_approved_narration`; under the new contract no narration plan exists, so a bot stop correctly does not complete a slide.
+
+### Problems or uncertainties
+
+- The output safety/pipeline integration and existing tests must route approved slide narration through `should_segment_approved_output()` and `accept_approved_narration()` for end-to-end segment playback. This iteration changed only `presentation_runtime.py` as scoped.
+- Exact playback offsets remain unavailable; resume accuracy is segment-level only.
+
+### Result after iteration
+
+- The runtime implements generation-safe segment queueing, completion, interruption, replay, invalidation, progress, errors, and metrics without external calls.
+- No commit or push was created.
+
+### Next recommended step
+
+- Wire approved output into `accept_approved_narration`, pass `load_narration_max_characters()` from agent construction, and update runtime tests to create approved plans before playback lifecycle events.
+
+### Iteration 9 completion note
+
+The earlier entry captured an intermediate runtime-only handoff. The remaining
+pipeline integration was already present at the start of this completion pass;
+this note records the completed offline test/documentation scope and final
+validation.
+
+#### Files added
+
+- `tests/test_narration.py`
+- `scripts/live_test_preflight.py`
+- `docs/RESUME_ACCURACY.md`
+- `docs/LIVE_TEST_PLAN.md`
+
+#### Files updated in this completion pass
+
+- `frontend/lessonProtocol.test.ts`, `frontend/lessonProtocol.ts`
+- `docs/ARCHITECTURE.md`, `docs/PIPECAT_COMPATIBILITY.md`
+- `docs/SESSION_DATA.md`, `docs/SAFETY.md`, `README.md`
+
+#### Offline coverage
+
+- Deterministic segmentation, configuration validation, plan defaults/progress
+- Segment progression and final-segment-only slide/Q&A completion
+- Pause/resume and barge-in replay at segment granularity
+- Navigation generation invalidation and cancelled completion suppression
+- Content-free narration metrics
+- `/health/live` and `/health/ready` through `TestClient`, with a temporary
+  SQLite path and network methods set to fail if called
+- Frontend narration parsing, malformed/text-leak rejection, stale sequence
+  rejection, one-based segment wording, and type-level absence of text fields
+
+#### API evidence and limitation
+
+- Installed Pipecat `BotStoppedSpeakingFrame` has no playback-offset field.
+- `OutputAudioRawFrame` carries produced audio bytes but no client-played acknowledgement.
+- Installed client-js `botStoppedSpeaking` and `trackStarted` callbacks have no offset.
+- FastAPI WebSocket + Protobuf has no played-offset acknowledgement in this protocol.
+- The truthful guarantee is deterministic `ResumeAccuracy.SEGMENT`.
+
+#### Validation results
+
+- `uv run pytest tests/test_narration.py tests/test_presentation_runtime.py -q`
+  → **32 passed**, 2 dependency deprecation warnings.
+- With the repository-pinned Node 22 toolchain:
+  `cd frontend && yarn test && yarn tsc --noEmit`
+  → **29 frontend tests passed** and TypeScript passed.
+- `cd frontend && yarn vite build` with Node 22 → passed (72 modules transformed).
+- `uv run python scripts/live_test_preflight.py`
+  → passed Python 3.11.14, Node 22, Yarn 1.22.22, package hints, `.env`
+  existence-only check, ports, backend imports, and approved prompt registry.
+  It printed `No OpenAI request was made`.
+- IDE diagnostics for edited Python/TypeScript files: no errors.
+
+The first frontend attempt used the ambient Node 24 shell where `yarn` was not
+on `PATH`; validation was rerun successfully after loading the repository's
+Node 22 toolchain. The first preflight also exposed its missing repository
+import path and an orphaned prior `/connect` smoke-test uvicorn process on
+port 7860; the import path was fixed, that stale process was stopped, and the
+preflight then passed with both required ports available.
+
+#### Live status
+
+**LIVE OPENAI VALIDATION NOT RUN.** No OpenAI request was made, `/ws` was not
+opened, `.env` contents were not read or printed, and no production
+`data/tutor_sessions.sqlite3` test access was used.
+
+### Iteration 9 final offline validation
+
+- Full `uv run pytest -q` → **171 passed**.
+- Frontend yarn test/tsc/vite pass.
+- Preflight: No OpenAI request was made.
+- Health live/ready/connect/knowledge status: 200 without `/ws`.
+- **LIVE OPENAI VALIDATION NOT RUN**

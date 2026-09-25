@@ -316,6 +316,11 @@ class OutputSafetyProcessor(FrameProcessor):
                     )
                 except Exception:  # noqa: BLE001
                     pass
+            # Segment slide narration through the runtime; do not send the full
+            # unsegmented text to TTS. Answers/Q&A still release as TextFrame.
+            if self._runtime.should_segment_approved_output():
+                await self._runtime.accept_approved_narration(text)
+                return
             if start_frame is not None:
                 await self.push_frame(start_frame, direction)
             if text:

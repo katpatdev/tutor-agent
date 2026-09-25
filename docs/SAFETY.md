@@ -43,6 +43,12 @@ Blocked student text is never inserted into LLM context and is never logged.
 6. Oversized, timeout, or error → fail closed (replacement / no original release).
 7. Predefined safety templates queued by the runtime bypass LLM output gating (they are source-controlled).
 
+For slide narration, an allowed complete response is passed to
+`PresentationRuntime.accept_approved_narration` and segmented only **after**
+approval. Unmoderated LLM text is never released segment-by-segment to TTS.
+Public narration progress and metrics contain indexes/counts only, never the
+approved narration text.
+
 ### Latency tradeoff
 
 Full-response buffering means TTS cannot start until the LLM finishes **and** moderation returns. This adds end-to-end latency (LLM completion time + moderation RTT, bounded by `MODERATION_TIMEOUT_SECONDS`) compared with token-streaming TTS. The tradeoff is intentional so students never hear unmoderated model text.
@@ -111,6 +117,14 @@ Disconnect reports and SQLite metric rows are content-free. Transcripts require 
 ## Learning flywheel privacy (Iteration 8)
 
 Historical transcript text (including redacted examples) is **never** sent to OpenAI for friction analysis or candidate generation. Live eval/optimizer calls are disabled by default and cannot include transcript fields. Prompt candidates cannot auto-weaken moderation; safety invariant checks run before any judge evaluation. See `docs/LEARNING_FLYWHEEL.md`.
+
+## Segment resume safety (Iteration 9)
+
+Pause, interruption, and navigation remain deterministic application controls.
+Replaying an interrupted approved segment does not bypass output moderation:
+the plan contains text that already passed the output gate. Navigation
+invalidates that generation, preventing stale completion from advancing the
+lesson. Exact playback-offset resume is not claimed.
 
 ## Production remaining work
 

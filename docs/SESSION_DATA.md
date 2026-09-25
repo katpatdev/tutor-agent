@@ -10,6 +10,9 @@ Per WebSocket session (in memory always; optionally persisted):
 - RAG query/hit/miss counts and content-free RAG events
 - Verified Pipecat metrics: TTFB, processing duration, LLM token usage, TTS characters, STT audio seconds
 - Moderation/RAG latency summaries (count/min/mean/p50/p95/max)
+- Content-free narration plan/segment counts, interruptions, replays,
+  stale/cancelled completions, errors, average segment characters, and
+  `resume_accuracy` (`segment`)
 - Whether a redacted transcript was saved
 
 Monetary OpenAI cost is **not** calculated.
@@ -55,6 +58,7 @@ Consent cannot change after the lesson starts; reconnect to change it.
 - System prompts, retrieved chunks, embeddings, moderation scores
 - Uploaded knowledge documents (remain in the separate in-memory knowledge store)
 - API keys
+- Narration segment text or narration plans
 
 ## Redaction
 
@@ -65,7 +69,7 @@ Limitations: cannot reliably strip all names/locations/PII. Consent remains requ
 ## SQLite
 
 - Path: `SESSION_DB_PATH` (default `data/tutor_sessions.sqlite3`)
-- Schema version: `PRAGMA user_version = 1`
+- Schema version: `PRAGMA user_version = 2`
 - Foreign keys + WAL + busy timeout
 - `data/` and SQLite sidecars are gitignored
 - Restrictive directory/file permissions where the OS allows
@@ -81,6 +85,11 @@ Content-free metrics/session rows may persist when metrics persistence is enable
 ## Disconnect report
 
 Printed once to the server console; never includes transcript text. Finalization is idempotent.
+
+Iteration 9 narration fields are counters/derived values only:
+`narration_plans_created`, generated/completed/interrupted/replayed segment
+counts, ignored/suppressed completion counts, narration errors, average segment
+characters, and `narration_resume_accuracy`. They contain no narration text.
 
 ## Export CLI (local only)
 

@@ -118,6 +118,42 @@ class SessionMetricsCollector:
     transcript_saved: bool = False
     finalized: bool = False
     application_errors: int = 0
+    narration_plans_created: int = 0
+    narration_segments_generated: int = 0
+    narration_segments_completed: int = 0
+    narration_segment_interruptions: int = 0
+    narration_segment_replays: int = 0
+    narration_stale_completions_ignored: int = 0
+    narration_cancelled_completions_suppressed: int = 0
+    narration_errors: int = 0
+    narration_segment_char_total: int = 0
+    narration_resume_accuracy: str = "segment"
+
+    def note_narration_snapshot(
+        self,
+        *,
+        plans_created: int,
+        segments_generated: int,
+        segments_completed: int,
+        segment_interruptions: int,
+        segment_replays: int,
+        stale_completions_ignored: int,
+        cancelled_completions_suppressed: int,
+        narration_errors: int,
+        segment_char_total: int,
+        resume_accuracy: str = "segment",
+    ) -> None:
+        """Copy content-free narration counters (no segment text)."""
+        self.narration_plans_created = plans_created
+        self.narration_segments_generated = segments_generated
+        self.narration_segments_completed = segments_completed
+        self.narration_segment_interruptions = segment_interruptions
+        self.narration_segment_replays = segment_replays
+        self.narration_stale_completions_ignored = stale_completions_ignored
+        self.narration_cancelled_completions_suppressed = cancelled_completions_suppressed
+        self.narration_errors = narration_errors
+        self.narration_segment_char_total = segment_char_total
+        self.narration_resume_accuracy = resume_accuracy
 
     def note_lesson_state(self, *, mode: str, slide_index: int) -> None:
         self.lesson_mode = mode
@@ -302,6 +338,20 @@ class SessionMetricsCollector:
             "transcript_consent": self.transcript_consent,
             "transcript_storage_active": self.transcript_storage_active,
             "transcript_saved": self.transcript_saved,
+            "narration_plans_created": self.narration_plans_created,
+            "narration_segments_generated": self.narration_segments_generated,
+            "narration_segments_completed": self.narration_segments_completed,
+            "narration_segment_interruptions": self.narration_segment_interruptions,
+            "narration_segment_replays": self.narration_segment_replays,
+            "narration_stale_completions_ignored": self.narration_stale_completions_ignored,
+            "narration_cancelled_completions_suppressed": self.narration_cancelled_completions_suppressed,
+            "narration_errors": self.narration_errors,
+            "narration_average_segment_characters": (
+                round(self.narration_segment_char_total / self.narration_segments_generated, 2)
+                if self.narration_segments_generated
+                else 0.0
+            ),
+            "narration_resume_accuracy": self.narration_resume_accuracy,
         }
 
     def print_disconnect_report(self) -> None:

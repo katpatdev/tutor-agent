@@ -69,7 +69,23 @@ pcClient.sendClientMessage('lesson.command', commandEnvelope)
 
 ## Narration completion / interruption
 
-Unchanged from Iteration 3: audible `BotStartedSpeaking`/`BotStoppedSpeaking` pairs; `UserStartedSpeaking` + `InterruptionFrame` for barge-in/pause; suppress cancelled stops.
+Iteration 9 uses audible `BotStartedSpeaking`/`BotStoppedSpeaking` pairs for
+one deterministic narration segment at a time. `UserStartedSpeaking` plus
+`InterruptionFrame` handles barge-in/pause, and cancelled stops are suppressed.
+
+Exact playback-offset resume is not available:
+
+- inspected `BotStoppedSpeakingFrame` fields contain frame metadata but no
+  played sample/time/byte/word offset;
+- `OutputAudioRawFrame` contains produced audio bytes, sample rate, channels,
+  and frame count, but no acknowledgement of browser playback;
+- client-js callbacks are `botStoppedSpeaking: () => void` and
+  `trackStarted: (track: MediaStreamTrack, participant?: Participant) => void`;
+- the FastAPI WebSocket + Protobuf application protocol has no played-offset
+  acknowledgement.
+
+The truthful contract is `resume_accuracy: "segment"`; see
+`docs/RESUME_ACCURACY.md`.
 
 ## Safety processors (Iteration 5)
 
@@ -127,5 +143,6 @@ Limitations: metric availability depends on each OpenAI STT/LLM/TTS service impl
 ## Still requires a real OpenAI session to verify
 
 - End-to-end audio quality and live control timing under real TTS load
-- Exact audible/byte resume (not implemented; logical cursor only)
+- Exact playback-offset resume (not available; deterministic segment-level resume is implemented)
 - Live moderation / embedding / metrics latency under production network conditions
+- **LIVE OPENAI VALIDATION NOT RUN**

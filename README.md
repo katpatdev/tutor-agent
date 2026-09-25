@@ -12,7 +12,10 @@ Update existing agent code in such a way that following goals are met, while kee
 ### Goals
 - Should smoothly return back to topic once questions are answered.
 - Should reliably end the presentation when last slide is finished and enter QnA mode, i.e., simple 2 way conversation, while also being able to return back at any point in presentation based on user request.
-- Should allow pauses sent from frontend, i.e., agent stops speaking. On resuming, agent starts speaking exactly where it left off.
+- Should allow pauses sent from frontend, i.e., agent stops speaking. The
+  implemented guarantee resumes at the deterministic narration-segment
+  boundary; exact browser playback-offset resume is not available in the
+  current Pipecat/client transport APIs.
 
 ### Additional Goals
 - Should have guard rails w.r.t underage users.
@@ -70,3 +73,13 @@ Do not put `OPENAI_API_KEY` in frontend / `VITE_` variables.
 - Local friction analysis (no OpenAI on historical transcripts): `uv run python -m flywheel analyze`
 - Offline eval validation: `uv run python -m eval_harness validate` / `run-offline-fixtures`
 - See `docs/LEARNING_FLYWHEEL.md` and `docs/EVALUATIONS.md`.
+
+#### Segment-level narration and resume (Iteration 9)
+
+- Safety-approved slide narration is split into deterministic, generation-scoped segments.
+- Pause/barge-in replays the interrupted segment; slide navigation invalidates stale plans.
+- `lesson.state` exposes one-based content-free segment progress.
+- Exact playback-offset/word/audio-byte resume is **not available**. See `docs/RESUME_ACCURACY.md`.
+- Offline validation: `uv run pytest tests/test_narration.py tests/test_presentation_runtime.py -q`.
+- Live checklist: `docs/LIVE_TEST_PLAN.md`. **LIVE OPENAI VALIDATION NOT RUN.**
+- Preflight only (no OpenAI request): `uv run python scripts/live_test_preflight.py`.

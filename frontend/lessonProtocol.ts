@@ -15,6 +15,13 @@ export type LessonCommandMessage = {
   payload: Record<string, unknown>;
 };
 
+export type NarrationProgress = {
+  current_segment: number;
+  total_segments: number;
+  resume_accuracy: 'segment' | 'exact_playback';
+  error?: string;
+};
+
 export type LessonStateMessage = {
   type: 'lesson.state';
   version: 1;
@@ -32,6 +39,7 @@ export type LessonStateMessage = {
   can_navigate: boolean;
   safety_status: 'normal' | 'redirecting' | 'hold';
   safety_notice: string | null;
+  narration?: NarrationProgress | null;
 };
 
 export type LessonCommandResultMessage = {
@@ -149,6 +157,22 @@ export function parseServerMessage(raw: unknown): LessonServerMessage | null {
     if (!(raw.safety_notice === null || typeof raw.safety_notice === 'string')) {
       return null;
     }
+    if (raw.narration !== undefined && raw.narration !== null) {
+      if (!isObject(raw.narration)) return null;
+      if (typeof raw.narration.current_segment !== 'number') return null;
+      if (typeof raw.narration.total_segments !== 'number') return null;
+      if (
+        raw.narration.resume_accuracy !== 'segment' &&
+        raw.narration.resume_accuracy !== 'exact_playback'
+      ) {
+        return null;
+      }
+      // Reject narration text leaks in state metadata
+      if ('text' in raw.narration || 'segment_text' in raw.narration) return null;
+      if (raw.narration.error !== undefined && typeof raw.narration.error !== 'string') {
+        return null;
+      }
+    }
     return raw as LessonStateMessage;
   }
 
@@ -195,6 +219,17 @@ export class LessonStateTracker {
     this.latestSequence = -1;
     this.latestState = null;
   }
+}
+
+export function formatNarrationStatus(narration: NarrationProgress | null | undefined): string {
+  if (!narration || narration.total_segments <= 0) {
+    return '';
+  }
+  const accuracy =
+    narration.resume_accuracy === 'exact_playback'
+      ? 'exact playback'
+      : 'segment-level';
+  return `Narration segment ${narration.current_segment} of ${narration.total_segments} · Resume accuracy: ${accuracy}`;
 }
 
 /** Client protocol types must never declare secret fields. */

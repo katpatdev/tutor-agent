@@ -66,6 +66,64 @@ app.add_middleware(
 app.include_router(knowledge_router)
 
 
+@app.get("/health/live")
+async def health_live() -> Dict[str, Any]:
+    """Liveness: FastAPI process is running. Never calls OpenAI."""
+    return {"status": "ok"}
+
+
+@app.get("/health/ready")
+async def health_ready() -> Dict[str, Any]:
+    """Readiness: local config/modules only. Never calls OpenAI or opens /ws."""
+    from prompt_registry import PromptRegistryError, load_active_tutor_prompt
+    from narration_plan import NarrationConfigError, load_narration_max_characters
+    from session_config import SessionConfigError, load_session_data_config
+    from agent import SHARED_SESSION_STORE
+
+    checks: Dict[str, str] = {}
+    ready = True
+    try:
+        load_safety_config()
+        checks["safety_config"] = "ok"
+    except Exception:  # noqa: BLE001
+        checks["safety_config"] = "error"
+        ready = False
+    try:
+        load_rag_config()
+        checks["rag_config"] = "ok"
+    except Exception:  # noqa: BLE001
+        checks["rag_config"] = "error"
+        ready = False
+    try:
+        load_session_data_config()
+        checks["session_config"] = "ok"
+    except SessionConfigError:
+        checks["session_config"] = "error"
+        ready = False
+    try:
+        load_narration_max_characters()
+        checks["narration_config"] = "ok"
+    except NarrationConfigError:
+        checks["narration_config"] = "error"
+        ready = False
+    try:
+        load_active_tutor_prompt()
+        checks["prompt_registry"] = "ok"
+    except PromptRegistryError:
+        checks["prompt_registry"] = "error"
+        ready = False
+    if SHARED_SESSION_STORE is not None:
+        checks["session_store"] = "ok"
+    else:
+        checks["session_store"] = "unavailable"
+        # Metrics persistence may be optional; do not fail readiness solely on store.
+    status_code_ok = ready
+    return {
+        "status": "ready" if status_code_ok else "not_ready",
+        "checks": checks,
+    }
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
