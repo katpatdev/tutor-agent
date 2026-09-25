@@ -335,3 +335,106 @@ What has not been implemented (by design for Iteration 1):
 ### Next recommended step
 
 **Iteration 3:** Integrate the tested `LessonController` into the Pipecat pipeline (replace silence-timer slide ownership), map transport/control messages to lesson events, and honor returned effects—without yet completing full knowledge ingest or transcript flywheel.
+
+---
+
+## Iteration 3: Pipecat runtime integration (replace silence timer)
+
+- Date: 2026-09-25
+- Objective: Integrate `LessonController` with the Pipecat backend via a per-session runtime; remove `PresentationObserver0` silence-timer progression; add offline runtime tests; pin `pipecat-ai==1.11.0`. No frontend controls, RAG, flywheel, or full metrics. No live OpenAI calls during validation.
+- Starting commit: `8d0ba5183468c8f02f8ecd35c3f9dd012c5cf403`
+- Starting Git status: clean working tree on `main` after Iteration 1–2 checkpoint commit (local `.env` present, gitignored).
+
+### Before
+
+- `agent.py` used `PresentationObserver0` with a 3.0s `call_later` silence timer to advance slides and a final “Say goodbye and end the presentation.” branch that skipped reliable Q&A.
+- TTS instructions referred to “business people” / “Speak fast.”
+- `LessonController` existed but was not wired.
+- Pipecat dependency was open-ended `>=0.0.102` (resolved 1.11.0).
+
+### API-key preflight
+
+- `.env` exists: yes
+- `API key loaded:` **True** (Boolean only; key never printed)
+- `.env` gitignored and not tracked
+
+### Files created
+
+- `presentation_runtime.py` — per-session runtime, `OutputPurpose`, `FrameSink`, test doubles
+- `tests/test_presentation_runtime.py` — 20 offline runtime/integration tests
+- `docs/PIPECAT_COMPATIBILITY.md` — inspected Pipecat 1.11.0 APIs and lifecycle mapping
+
+### Files modified
+
+- `agent.py` — removed `PresentationObserver0`; wired `PresentationRuntime` + `LessonLifecycleObserver`; base tutor prompt; student TTS instructions; connect starts lesson; disconnect ends session + cancel
+- `docs/ARCHITECTURE.md` — ownership boundaries, event/effect maps, limitations
+- `docs/IMPLEMENTATION_LOG.md` — this entry appended
+- `pyproject.toml` — pin `pipecat-ai[openai,silero,websocket]==1.11.0`
+- `uv.lock` — regenerated for exact pin (version remained 1.11.0)
+
+### Before-and-after behavior
+
+| Concern | Before | After |
+|---------|--------|-------|
+| Slide advance | 3s bot silence timer | `BotStoppedSpeaking` after audible narration + controller `SLIDE_COMPLETED` |
+| Final slide | Goodbye / end presentation text | All 8 slides; then `QA_MODE` + Q&A invite |
+| Interrupts | Flag + continue-after-silence | `USER_INTERRUPTED` → stop via `InterruptionFrame` → answer → `RESUME_NARRATION` |
+| Authority | Observer counters | One `LessonController` per WebSocket session |
+| Persona | Business / speak fast | Student science tutor persona + calm TTS |
+
+### Exact Pipecat APIs verified (1.11.0)
+
+- `Pipeline`, `PipelineTask.queue_frames`, `PipelineTask.cancel`, `PipelineParams(allow_interruptions=True)`
+- `BaseObserver.on_push_frame` / `FramePushed`
+- Frames: `BotStartedSpeakingFrame`, `BotStoppedSpeakingFrame`, `UserStartedSpeakingFrame`, `InterruptionFrame`, `LLMMessagesAppendFrame`
+- Transport: `FastAPIWebsocketTransport` events `on_client_connected`, `on_client_disconnected`
+- Services unchanged: OpenAI STT/LLM/TTS model names preserved
+
+### Design decisions
+
+- Keep `lesson_controller.py` free of Pipecat; lazy-import frames in runtime unless test factories inject fakes.
+- Treat only audible start→stop pairs as narration completion; suppress bot-stop after interruption/pause.
+- Mint stable completion IDs `slide-complete-{slide}-u{utterance}` for duplicate protection.
+- Backend `pause` / `resume` / `go_to_slide` methods exist but are not frontend-wired yet.
+- Offline tests use `asyncio.run` (no pytest-asyncio dependency).
+
+### Commands executed
+
+- Preflight: `uv run pytest -q` (20 passed), env Boolean check, Pipecat inspect
+- `uv lock` / `uv sync` after pin
+- `uv run pytest -q` (40 passed)
+- `uv run python -m compileall ...`
+- `uv run python -c "import agent, main, lesson_controller, presentation_runtime; ..."`
+- `rg` obsolete strings; non-billable `POST /connect` smoke; `git diff --check`
+
+### Validation results
+
+- `uv run pytest -q` → **40 passed** (20 controller + 20 runtime), 2 Pipecat deprecation warnings on agent import
+- `compileall` → pass
+- imports → `imports passed`
+- `POST /connect` → HTTP **200**, `{"ws_url":"ws://localhost:7860/ws"}`; server stopped; no WebSocket client opened
+- Obsolete runtime strings absent from `agent.py` / `presentation_runtime.py` (only asserted/historical in tests/docs)
+- No live OpenAI STT/LLM/TTS invoked during this iteration’s validation
+- No secret printed or committed
+
+### Failures encountered and resolutions
+
+- Initial runtime tests used `@pytest.mark.asyncio` without plugin → converted to `asyncio.run` wrappers; all passed.
+
+### Known limitations
+
+- No frontend pause/goto wiring
+- Logical cursor only (not audio-byte resume)
+- Baseline persona ≠ full underage moderation
+- No RAG, transcript flywheel, or disconnect metrics report
+- Live interruption ordering under real OpenAI audio still unverified (requires approved billable session)
+
+### Result after iteration
+
+- Silence-timer controller retired; deterministic controller owns progression through `PresentationRuntime`.
+- Offline test suite green (40).
+- Pipecat dependency exactly pinned to 1.11.0.
+
+### Next recommended step
+
+**Iteration 4:** Add frontend (or WS) control messages for pause/resume/goto validated by the backend runtime; optionally begin disconnect metrics logging and stronger underage guardrails—without yet building full RAG/flywheel unless scoped separately.
