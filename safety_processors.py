@@ -10,6 +10,7 @@ from typing import Optional, Set
 from pipecat.frames.frames import (
     Frame,
     InterimTranscriptionFrame,
+    InterruptionFrame,
     LLMFullResponseEndFrame,
     LLMFullResponseStartFrame,
     LLMTextFrame,
@@ -32,6 +33,7 @@ from safety_policy import (
     oversized_decision,
     template_text,
 )
+from speech_chunking import pack_spoken_units
 
 
 def _decision_label(decision: SafetyDecision) -> str:
@@ -137,6 +139,9 @@ class InputSafetyProcessor(FrameProcessor):
             )
             if self._observability is not None:
                 try:
+                    self._observability.collector.note_answer_stage(
+                        "input_moderation_complete"
+                    )
                     self._observability.record_safety_event(
                         decision=_decision_label(decision.decision),
                         reason_code=decision.reason.value,
@@ -206,6 +211,15 @@ class OutputSafetyProcessor(FrameProcessor):
                         )
                 except Exception:  # noqa: BLE001
                     pass
+            await self.push_frame(frame, direction)
+            return
+
+        # Interruption must drop any in-flight buffer so a cancelled narration
+        # generation cannot later release stale text after an answer starts.
+        if isinstance(frame, InterruptionFrame):
+            self._buffering = False
+            self._parts = []
+            self._held_control = []
             await self.push_frame(frame, direction)
             return
 
@@ -317,15 +331,35 @@ class OutputSafetyProcessor(FrameProcessor):
                 except Exception:  # noqa: BLE001
                     pass
             # Segment slide narration through the runtime; do not send the full
-            # unsegmented text to TTS. Answers/Q&A still release as TextFrame.
+            # unsegmented text to TTS. Answers/Q&A release as packed TTSSpeakFrame
+            # units (fewer sequential OpenAI TTS round-trips than per-sentence TextFrame).
             if self._runtime.should_segment_approved_output():
                 await self._runtime.accept_approved_narration(text)
                 return
-            if start_frame is not None:
-                await self.push_frame(start_frame, direction)
-            if text:
-                await self.push_frame(TextFrame(text=text), direction)
-            await self.push_frame(end_frame, direction)
+            # Drop late answer text after Pause→Resume returned to narration.
+            if not self._runtime.should_accept_llm_spoken_answer():
+                if self._observability is not None:
+                    try:
+                        self._observability.collector.note_answer_stage(
+                            "stale_answer_dropped"
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
+                return
+            if self._observability is not None:
+                try:
+                    self._observability.collector.note_answer_stage(
+                        "output_moderation_complete"
+                    )
+                    self._observability.collector.note_answer_stage("tts_start")
+                except Exception:  # noqa: BLE001
+                    pass
+            units = pack_spoken_units(text) if text else []
+            if not units and text:
+                units = [text]
+            self._runtime.begin_moderated_answer_speech(len(units) if units else 1)
+            for unit in units:
+                await self.push_frame(TTSSpeakFrame(text=unit), direction)
             return
 
         # Replace unsafe LLM output; do not push original text to TTS or assistant path.

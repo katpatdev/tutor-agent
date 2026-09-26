@@ -583,9 +583,50 @@ def strip_rag_messages(messages: list) -> list:
     return cleaned
 
 
+_CONVERSATIONAL_ACKS = frozenset(
+    {
+        "yes",
+        "no",
+        "yeah",
+        "yep",
+        "yup",
+        "nope",
+        "okay",
+        "ok",
+        "sure",
+        "continue",
+        "go on",
+        "go ahead",
+        "repeat",
+        "repeat that",
+        "say that again",
+        "i don't understand",
+        "i dont understand",
+        "i don't know",
+        "i dont know",
+        "huh",
+        "what",
+        "uh huh",
+        "mm hmm",
+        "mmhm",
+        "thanks",
+        "thank you",
+    }
+)
+
+
+def is_conversational_ack(text: str) -> bool:
+    """True for short acknowledgements that should skip RAG embeddings."""
+    cleaned = " ".join(text.strip().lower().split())
+    cleaned = cleaned.rstrip(".!?,;:")
+    return cleaned in _CONVERSATIONAL_ACKS
+
+
 def looks_like_question(text: str) -> bool:
     lowered = text.strip().lower()
     if not lowered:
+        return False
+    if is_conversational_ack(lowered):
         return False
     if "?" in lowered:
         return True

@@ -22,27 +22,34 @@ Exact playback-offset resume is **not** marked complete.
 
 ## Assignment / README requirements
 
-| Requirement | Implementation | Tests | Docs | Manual demo | Status |
-|-------------|----------------|-------|------|-------------|--------|
-| Pipecat-only orchestration | `agent.py`, `main.py`, `presentation_runtime.py` | `tests/test_presentation_runtime.py` | `docs/ARCHITECTURE.md`, `docs/PIPECAT_COMPATIBILITY.md` | Architecture overview | complete |
-| OpenAI-only external AI | STT/LLM/TTS/Moderation/Embeddings clients | fake clients in safety/RAG/eval tests | README, AGENTS.md | Live STT/LLM/TTS | complete offline; live unverified |
-| Eight-slide natural-disaster curriculum | `curriculum.py` | controller/runtime reachability tests | README | Slides 1–8 | complete |
-| Student interruption | `lesson_controller.py`, `presentation_runtime.py` | runtime interruption tests, `tests/test_narration.py` | ARCHITECTURE, LIVE_TEST_PLAN | Scenario 4 | complete offline; live unverified |
-| Answer then topic recovery | ANSWER_COMPLETED → RESUME_NARRATION + segment replay | narration/runtime tests | ARCHITECTURE, RESUME_ACCURACY | Scenario 4 | complete offline; live unverified |
-| Final slide then Q&A | SLIDE_COMPLETED on index 7 → QA_MODE | runtime Q&A tests | LIVE_TEST_PLAN | Scenario 7 | complete offline; live unverified |
-| Return to any slide | `goto_slide` protocol + controller | protocol/runtime nav tests | LIVE_TEST_PLAN | Scenario 6 | complete offline; live unverified |
-| Frontend Pause / Resume | `frontend/app.ts`, lesson protocol | frontend protocol tests | README, LIVE_TEST_PLAN | Scenarios 2–3 | complete offline; live unverified |
-| Resume accuracy (segment-level) | `narration_plan.py`, `presentation_runtime.py` | `tests/test_narration.py` | `docs/RESUME_ACCURACY.md` | Scenario 3 | complete (segment); exact resume known limitation |
-| Student safety | `safety_processors.py`, `safety_policy.py`, `moderation_service.py` | `tests/test_safety.py` | `docs/SAFETY.md` | Scenario 8 | complete offline; live unverified |
-| Deterministic tests | `tests/*.py` | pytest suite (171) | IMPLEMENTATION_LOG | Show pytest | complete |
-| LLM-as-a-judge tests | `eval_harness.py`, `evals/` | offline fixtures | `docs/EVALUATIONS.md` | Show offline fixtures | complete (offline); live judge not required |
-| Knowledge ingestion | `knowledge_ingestion.py`, `knowledge_api.py` | `tests/test_knowledge.py` | `docs/KNOWLEDGE_RAG.md` | Scenario 9 | complete offline; live unverified |
-| RAG source attribution | `retrieval_processor.py`, frontend knowledge UI | knowledge tests | KNOWLEDGE_RAG | Scenario 9 | complete offline; live unverified |
-| Disconnect metrics | `session_metrics.py`, observability | session tests | SESSION_DATA | Scenario 10 | complete offline; live unverified |
-| Transcript persistence | consent + redaction + SQLite | `tests/test_session_data.py` | SESSION_DATA | Scenario 11 | complete offline; live unverified |
-| Transcript learning flywheel | `friction_analyzer.py`, `flywheel.py`, prompt workflow | `tests/test_flywheel.py` | LEARNING_FLYWHEEL | Show analyze CLI | complete (local; no auto-deploy) |
-| Frontend/backend synchronization | protocol sequence + server-authoritative state | protocol tests | ARCHITECTURE | Connect UI | complete |
-| Privacy and consent | session configure, redaction, defaults | session tests | SESSION_DATA, SAFETY | Scenario 11 | complete |
+Original `README.md` **Additional Goals** (verbatim paraphrase with source):
+
+> “Should have a reliable way to ingest additional knowledge so that agent can answer questions better.”  
+> — `README.md` § Additional Goals
+
+| Requirement | Original assignment | Current implementation | Classification |
+|-------------|---------------------|------------------------|----------------|
+| Knowledge ingestion | Explicit (“ingest additional knowledge”) | Upload + chunk + embed + in-memory store | **explicitly required** |
+| RAG / retrieval-augmented generation | Not named; implied by “ingest…answer better” | `RetrievalProcessor` after ALLOW | **implied** by original; architecture chosen in Iteration 6 |
+| Document upload UI/API | Not specified in original README | `POST /knowledge/documents`, frontend upload | **architectural enhancement** implementing the ingest goal |
+| Embeddings | Not named | `text-embedding-3-small` | **architectural enhancement** |
+| Source attribution | Not named in original README | `knowledge.retrieval` metadata (label, document_name, page) | **architectural enhancement** (supports grounded answers) |
+| Live RAG demo | Not in original README | Live test plan Scenario 9 | **current project / demo requirement** |
+
+Do not equate Iteration 6 design docs with the original assignment text. RAG is the chosen mechanism to satisfy the original knowledge-ingest goal; embeddings and source chips are implementation choices.
+
+## Core goal implementation status
+
+| Requirement | Implementation | Tests | Status |
+|-------------|----------------|-------|--------|
+| Pipecat-only / OpenAI-only | `agent.py`, clients | suite | complete offline |
+| Interruption → answer → topic recovery | controller + runtime | narration / 10.2 tests | complete offline; live unverified |
+| Final slide → Q&A | runtime | runtime tests | complete offline; live unverified |
+| Pause / Resume (segment) | protocol + runtime | frontend + backend | complete (segment); exact resume known limitation |
+| Student safety | safety processors | `test_safety.py` | complete offline |
+| Knowledge ingest + RAG | knowledge_* + retrieval | `test_knowledge.py` | complete offline; live unverified |
+| Disconnect metrics | session_metrics | session tests | complete |
+| Transcript flywheel (local) | flywheel / eval | flywheel + eval fixtures | complete (no auto-deploy) |
 
 ## Architecture ownership (verified)
 

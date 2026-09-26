@@ -63,6 +63,7 @@ class WebsocketClientApp {
   private knowledgeSourcesEl: HTMLElement | null = null;
   private transcriptConsent: HTMLInputElement | null = null;
   private transcriptStatusEl: HTMLElement | null = null;
+  private transcriptStorageStateEl: HTMLElement | null = null;
   private botAudio: HTMLAudioElement;
   private stateTracker = new LessonStateTracker();
   private connected = false;
@@ -71,6 +72,7 @@ class WebsocketClientApp {
   private knowledgeUploading = false;
   private maxUploadBytes = 5_242_880;
   private configureSent = false;
+  private sessionConsentLocked = false;
 
   constructor() {
     this.botAudio = document.createElement('audio');
@@ -116,12 +118,22 @@ class WebsocketClientApp {
       'transcript-consent'
     ) as HTMLInputElement;
     this.transcriptStatusEl = document.getElementById('transcript-status');
+    this.transcriptStorageStateEl = document.getElementById(
+      'transcript-storage-state'
+    );
     if (this.transcriptConsent) {
       this.transcriptConsent.checked = false;
       this.transcriptConsent.disabled = false;
+      this.transcriptConsent.addEventListener('change', () => {
+        if (this.sessionConsentLocked) {
+          return;
+        }
+        this.updateTranscriptStorageLabel();
+      });
     }
+    this.updateTranscriptStorageLabel();
     this.setTranscriptStatus(
-      'Transcript saving is optional and off by default. Metrics-only summaries may still be stored without conversation text.'
+      'Transcript saving is optional and off by default. Check the box before Connect. Changes after Connect apply only to the next session.'
     );
   }
 
@@ -222,6 +234,22 @@ class WebsocketClientApp {
     if (this.transcriptStatusEl) {
       this.transcriptStatusEl.textContent = message;
     }
+  }
+
+  private updateTranscriptStorageLabel(): void {
+    if (!this.transcriptStorageStateEl) {
+      return;
+    }
+    const on = !!this.transcriptConsent?.checked;
+    if (this.sessionConsentLocked) {
+      this.transcriptStorageStateEl.textContent = on
+        ? 'Transcript storage: ON (locked for this session)'
+        : 'Transcript storage: OFF (locked for this session)';
+      return;
+    }
+    this.transcriptStorageStateEl.textContent = on
+      ? 'Transcript storage: ON'
+      : 'Transcript storage: OFF';
   }
 
   private handleServerPayload(data: unknown): void {
@@ -514,6 +542,11 @@ class WebsocketClientApp {
         callbacks: {
           onConnected: () => {
             this.connected = true;
+            this.sessionConsentLocked = true;
+            if (this.transcriptConsent) {
+              this.transcriptConsent.disabled = true;
+            }
+            this.updateTranscriptStorageLabel();
             this.updateStatus('Connected');
             this.applyControlAvailability(this.stateTracker.state);
           },
@@ -522,11 +555,13 @@ class WebsocketClientApp {
             this.commandPending = false;
             this.pendingRequestId = null;
             this.configureSent = false;
+            this.sessionConsentLocked = false;
             this.updateStatus('Disconnected');
             this.applyControlAvailability(null);
             if (this.transcriptConsent) {
               this.transcriptConsent.disabled = false;
             }
+            this.updateTranscriptStorageLabel();
             this.log('Client disconnected');
           },
           onBotReady: (data) => {

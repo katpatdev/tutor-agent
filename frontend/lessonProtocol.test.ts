@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   CLIENT_PROTOCOL_FORBIDDEN_KEYS,
@@ -149,6 +151,18 @@ describe('lessonProtocol', () => {
     });
     const resume = createResumeCommand('r1');
     expect(resume.command).toBe('resume');
+  });
+
+  it('exposes labeled Pause/Resume/Connect/Disconnect controls in the app shell', () => {
+    const html = readFileSync(resolve(__dirname, 'index.html'), 'utf8');
+    expect(html).toContain('id="connect-btn">Connect</button>');
+    expect(html).toContain('id="disconnect-btn" disabled>Disconnect</button>');
+    expect(html).toContain('id="pause-btn" disabled>Pause</button>');
+    expect(html).toContain('id="resume-btn" disabled>Resume</button>');
+    expect(html).toContain('id="goto-btn" disabled>Go to Slide</button>');
+    expect(html).toContain('id="slide-select"');
+    expect(html).toContain('id="transcript-consent"');
+    expect(html).toContain('Transcript storage: OFF');
   });
 
   it('creates goto commands with zero-based index', () => {

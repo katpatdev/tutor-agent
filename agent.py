@@ -57,6 +57,11 @@ from safety_processors import InputSafetyProcessor, OutputSafetyProcessor
 from session_config import load_session_data_config
 from session_observability import SessionObservability
 from session_store import CURRICULUM_VERSION, SessionStore, SessionStoreError
+from voice_runtime_config import (
+    load_no_answer_timeout_seconds,
+    load_tts_speech_speed,
+    load_vad_runtime_config,
+)
 
 load_dotenv(override=True)
 
@@ -65,6 +70,9 @@ SAFETY_CONFIG = load_safety_config()
 RAG_CONFIG = load_rag_config()
 SESSION_DATA_CONFIG = load_session_data_config()
 NARRATION_MAX_CHARACTERS = load_narration_max_characters()
+NO_ANSWER_TIMEOUT_SECONDS = load_no_answer_timeout_seconds()
+TTS_SPEECH_SPEED = load_tts_speech_speed()
+VAD_RUNTIME = load_vad_runtime_config()
 
 try:
     SHARED_SESSION_STORE: SessionStore | None = SessionStore(SESSION_DATA_CONFIG)
@@ -135,6 +143,7 @@ async def run_bot(websocket_client):
         model="gpt-4o-mini-tts",
         voice="alloy",
         instructions=TTS_INSTRUCTIONS,
+        speed=TTS_SPEECH_SPEED,
     )
 
     llm = OpenAILLMService(
@@ -145,10 +154,10 @@ async def run_bot(websocket_client):
     context = LLMContext(messages)
 
     vad_params = VADParams(
-        confidence=0.85,
-        start_secs=0.45,
-        stop_secs=0.35,
-        min_volume=0.7,
+        confidence=VAD_RUNTIME.confidence,
+        start_secs=VAD_RUNTIME.start_secs,
+        stop_secs=VAD_RUNTIME.stop_secs,
+        min_volume=VAD_RUNTIME.min_volume,
     )
     context_aggregator = LLMContextAggregatorPair(
         context,
@@ -177,6 +186,7 @@ async def run_bot(websocket_client):
         slide_prompts=slide_prompts(),
         frame_sink=_TaskFrameSink(),
         narration_max_characters=NARRATION_MAX_CHARACTERS,
+        no_answer_timeout_seconds=NO_ANSWER_TIMEOUT_SECONDS,
     )
     runtime.set_observability(observability)
 

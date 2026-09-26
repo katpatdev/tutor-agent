@@ -23,6 +23,9 @@
             Allow this session’s redacted conversation transcript to be stored
             locally for improving future lessons.
           </label>
+          <p id="transcript-storage-state" class="hint" aria-live="polite">
+            Transcript storage: OFF
+          </p>
           <p id="transcript-status" class="hint" aria-live="polite"></p>
         </div>
         <div class="controls">
@@ -61,7 +64,9 @@
         <p class="error-box" id="command-error" role="alert" aria-live="assertive"></p>
         <p class="safety-notice" id="safety-notice" aria-live="polite"></p>
         <p class="hint">
-          Resume continues from the saved logical lesson position (not exact audio bytes).
+          Resume continues from the interrupted narration segment (not exact audio bytes).
+          Use the labeled Pause / Resume / Connect / Disconnect buttons here — browser or
+          OS microphone device controls are separate from this app.
         </p>
       </section>
 

@@ -358,14 +358,26 @@ class LessonController:
                 event_type=event.type,
             )
 
+        # Pause during ANSWERING/INTERRUPTED must not hang waiting for speech.
+        # Resume alone returns to the interrupted narration segment.
+        if restore_mode in {LessonMode.ANSWERING, LessonMode.INTERRUPTED}:
+            cursor = state.interruption_cursor or state.cursor
+            self._validate_cursor(state, cursor, event)
+            new_state = self._mark(
+                state,
+                event,
+                mode=LessonMode.PRESENTING,
+                cursor=cursor,
+                interruption_cursor=None,
+                mode_before_pause=None,
+            )
+            return TransitionResult(state=new_state, effect=LessonEffect.RESUME_NARRATION)
+
         if restore_mode is LessonMode.PRESENTING:
             effect = LessonEffect.RESUME_NARRATION
-        elif restore_mode is LessonMode.ANSWERING:
-            effect = LessonEffect.BEGIN_ANSWER
         elif restore_mode is LessonMode.QA_MODE:
-            effect = LessonEffect.ENTER_QA
-        elif restore_mode is LessonMode.INTERRUPTED:
-            effect = LessonEffect.STOP_NARRATION
+            # Stay in Q&A; do not re-queue the invitation.
+            effect = LessonEffect.NO_ACTION
         else:
             effect = LessonEffect.NO_ACTION
 

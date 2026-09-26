@@ -929,5 +929,107 @@ opened, `.env` contents were not read or printed, and no production
 
 ### Live phase
 
-**Not started.** Awaiting explicit user authorization for controlled live OpenAI validation.
+**Started after user authorization.** First manual browser validation exposed classroom UX defects (see Iteration 10.1). Packaging deferred.
+
+## Iteration 10.1 — Live classroom UX stabilization (2026-09-25)
+
+### Live defects discovered (run 1)
+
+- Session ended in `ANSWERING` with `answers = 0` around slide 3 after pause/resume during an interruption answer.
+- Pause/Resume felt to require student speech.
+- No-answer silence waited indefinitely after a tutor question.
+- Tutor speech pace felt too slow; interruption answers took ~3–4+ s before TTS.
+- Possible confusion between browser mic UI and app-owned controls.
+
+### Root causes (code-verified)
+
+1. **Stuck ANSWERING:** `LessonController._resume_requested` restored `ANSWERING` with effect `BEGIN_ANSWER` only — no TTS/LLM re-queue — so Resume alone could not leave answering.
+2. **Slide-3 progression:** Same lifecycle hang (`answers = 0`); cancelled completions suppressed while answer never completed.
+3. **Pause/Resume reliability:** Pause worked via command path; Resume-from-ANSWERING was the primary speech-dependent path.
+4. **No-answer:** No timeout existed; Q&A/comprehension waits were open-ended.
+5. **Speech pace:** Active tutor prompt lacked natural-pace guidance; TTS `speed` was unset (API default 1.0); TTS instructions said “moderately paced”.
+6. **Latency:** Output moderation still buffers full assistant text before TTS (unchanged by design). Optional RAG embeddings ran for question-like turns; short acks can skip.
+
+### Fixes implemented
+
+- Resume from `ANSWERING` / `INTERRUPTED` → `PRESENTING` + `RESUME_NARRATION` using `interruption_cursor`.
+- Drop late LLM answer text after return to narration (`should_accept_llm_spoken_answer`).
+- Deterministic one-shot no-answer timeout (default 10s) with friendly continue TTS; cancelled on student speech.
+- Tutor prompt + TTS instructions for natural conversational pace; TTS `speed` default `1.05`.
+- VAD `stop_secs` default `0.35` → `0.28` (env-configurable).
+- RAG skip for short conversational acknowledgements.
+- Content-free `answer_lifecycle_stages` counters.
+- App shell hint clarifying browser mic ≠ app controls (labels already text).
+
+### Tests added
+
+- `tests/test_classroom_ux_10_1.py` — answer lifecycle, cancelled completion, silence timeout/cancel, pause, resume (incl. from ANSWERING), slide progression after interruption, ack heuristic, voice config, metrics.
+- Frontend: labeled control inventory assertion in `lessonProtocol.test.ts`.
+
+### Files modified
+
+- `lesson_controller.py`, `presentation_runtime.py`, `agent.py`, `voice_runtime_config.py` (new)
+- `safety_processors.py`, `retrieval_processor.py`, `knowledge_ingestion.py`, `session_metrics.py`
+- `prompts/tutor/v1.md`, `prompts/registry.json`, `.env.example`
+- `frontend/index.html`, `frontend/lessonProtocol.test.ts`
+- `docs/LIVE_TEST_RESULTS.md`, `docs/IMPLEMENTATION_LOG.md`
+- `tests/test_classroom_ux_10_1.py`
+
+### Known limitations (unchanged)
+
+- Segment-level resume only (not exact playback-offset).
+- Full-response output moderation before TTS (latency contributor).
+- Speech-speed UI selector deferred (env `TTS_SPEECH_SPEED` only).
+
+### Deliberately deferred
+
+- Major streaming / chunked-moderation redesign
+- Exact playback-offset resume
+- Broad UI redesign / mic device picker
+- Final submission packaging
+- Production/cloud deploy
+
+### Offline validation (Iteration 10.1)
+
+- `uv sync --locked` — ok
+- `uv run pytest -q` — **183 passed**
+- `compileall` — ok
+- `eval_harness validate` — 21 cases OK; offline fixtures — 13 OK
+- Frontend: yarn frozen install; **30** tests; tsc; vite build — ok
+- Health live/ready — 200; knowledge/status — 200; POST /connect — 200
+- Backend + frontend restarted for manual retest (`:7860`, `:5173`)
+
+### Live status
+
+Offline validation and service restart prepare run 2. **Do not claim live defects fixed until the user completes the manual retest checklist.**
+
+## Iteration 10.2 — Answer completion, TTS continuity, RAG audit (2026-09-26)
+
+### Live defect (run 2)
+
+Pre-audio interrupt on slide 6 set a generic next-stop suppress flag; answer `BotStoppedSpeaking` was consumed; `ANSWER_COMPLETED` never ran; mode stayed `ANSWERING`.
+
+### Fixes
+
+- Replaced `_suppress_next_bot_stopped` with `_expected_suppressed_stops` incremented **only** when audible playback is cancelled (idempotent via `_cancel_stop_pending`).
+- Pre-audio cancel increments `pre_audio_cancel_without_stop` and never suppresses future answer completion.
+- OutputSafety clears buffer on `InterruptionFrame`; moderated answers release via packed `TTSSpeakFrame` units (`speech_chunking.pack_spoken_units`) instead of per-sentence `TextFrame` aggregation.
+- Consent UI shows `Transcript storage: ON/OFF` and locks for the active session.
+- Empty-store RAG path already skipped embeddings (verified); docs clarified routing.
+
+### Tests
+
+- `tests/test_answer_completion_10_2.py` (pre-audio, mid-audio, second barge-in, packing, empty store, ack routing)
+- Updated classroom UX / narration / safety regressions
+
+### Offline validation
+
+Recorded after implementation (see final Cursor report for exact counts).
+
+### Deferred
+
+- Streaming/chunked output moderation
+- LLM RAG router
+- Exact playback-offset resume
+- Packaging
 

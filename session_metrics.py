@@ -128,6 +128,8 @@ class SessionMetricsCollector:
     narration_errors: int = 0
     narration_segment_char_total: int = 0
     narration_resume_accuracy: str = "segment"
+    answer_lifecycle_stages: dict = field(default_factory=dict)
+    no_answer_continuations: int = 0
 
     def note_narration_snapshot(
         self,
@@ -228,6 +230,15 @@ class SessionMetricsCollector:
     def note_handled_error(self) -> None:
         self.handled_errors += 1
         self.application_errors += 1
+
+    def note_answer_stage(self, stage: str) -> None:
+        """Content-free answer-pipeline stage counter (no transcript text)."""
+        key = str(stage or "").strip()
+        if not key:
+            return
+        self.answer_lifecycle_stages[key] = int(self.answer_lifecycle_stages.get(key, 0)) + 1
+        if key == "no_answer_continue":
+            self.no_answer_continuations += 1
 
     def ingest_metrics_frame(self, frame: Any) -> None:
         try:
@@ -345,6 +356,8 @@ class SessionMetricsCollector:
             "narration_segment_replays": self.narration_segment_replays,
             "narration_stale_completions_ignored": self.narration_stale_completions_ignored,
             "narration_cancelled_completions_suppressed": self.narration_cancelled_completions_suppressed,
+            "answer_lifecycle_stages": dict(self.answer_lifecycle_stages),
+            "no_answer_continuations": self.no_answer_continuations,
             "narration_errors": self.narration_errors,
             "narration_average_segment_characters": (
                 round(self.narration_segment_char_total / self.narration_segments_generated, 2)

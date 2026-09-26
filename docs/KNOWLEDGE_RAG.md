@@ -57,9 +57,41 @@ Parse → (dedupe short-circuit) → chunk → moderate all → embed all → va
 STT → InputSafety → RetrievalProcessor → user aggregator → LLM → OutputSafety → TTS
 ```
 
-Retrieval runs only after input safety **ALLOW**, for question-like interruptions / Q&A utterances. Not for partials, control messages, slide narration, or safety redirect/hold.
+### Routing (deterministic — no LLM router)
 
-If the store is empty or embedding/search fails: continue without RAG (no crash, no invented sources); record a content-free diagnostic event.
+Implemented in `retrieval_processor.RetrievalProcessor._should_retrieve` and
+`knowledge_ingestion.is_conversational_ack` / `looks_like_question`:
+
+| Condition | Retrieve? |
+|-----------|-----------|
+| Session ended / safety not NORMAL | No |
+| Conversational ack (`yes`, `okay`, `continue`, `repeat that`, …) | No |
+| Purpose is slide narration / safety / QA invitation | No |
+| Mode `QA_MODE` (after ack filter) | Yes |
+| Mode `ANSWERING` / `INTERRUPTED` / `PRESENTING` and `looks_like_question` | Yes |
+| Otherwise | No |
+
+There is **no** separate OpenAI call to decide RAG usage.
+
+### Empty knowledge store
+
+If `InMemoryKnowledgeStore.chunk_count == 0`:
+
+- prior RAG system messages are still stripped
+- **no embedding API call**
+- **no vector search**
+- frontend receives `knowledge.retrieval` with `status=no_match` and empty sources
+- lesson/Q&A continues on curriculum context alone
+
+### Similarity / no-match
+
+- Top-k: `RAG_TOP_K` (default 4)
+- Minimum cosine similarity: `RAG_MIN_SIMILARITY` (default 0.30)
+- Below threshold → empty hits → `no_match` (no fabricated sources)
+
+Retrieval runs only after input safety **ALLOW**. Not for partials, control messages, slide narration, or safety redirect/hold.
+
+If embedding/search fails: continue without RAG (no crash, no invented sources); record a content-free diagnostic event.
 
 ## Temporary per-turn context
 

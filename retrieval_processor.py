@@ -27,6 +27,7 @@ from embedding_service import (
 from knowledge_ingestion import (
     build_rag_system_message,
     format_source_heading,
+    is_conversational_ack,
     looks_like_question,
     source_label,
     strip_rag_messages,
@@ -95,6 +96,8 @@ class RetrievalProcessor(FrameProcessor):
             return False
         if self._runtime.safety_status is not SafetyStatus.NORMAL:
             return False
+        if is_conversational_ack(text):
+            return False
         purpose = self._runtime.output_purpose
         if purpose in {
             OutputPurpose.SLIDE_NARRATION,
@@ -106,6 +109,7 @@ class RetrievalProcessor(FrameProcessor):
             return False
         mode = self._runtime.state.mode
         if mode is LessonMode.QA_MODE:
+            # Q&A turns generally need lesson/document grounding; acks already skipped.
             return True
         if mode in {LessonMode.ANSWERING, LessonMode.INTERRUPTED, LessonMode.PRESENTING}:
             return looks_like_question(text)
@@ -172,6 +176,7 @@ class RetrievalProcessor(FrameProcessor):
             )
             if self._observability is not None:
                 try:
+                    self._observability.collector.note_answer_stage("rag_skipped_empty")
                     self._observability.record_rag_event(
                         attempted=True,
                         hit_count=0,
@@ -185,6 +190,12 @@ class RetrievalProcessor(FrameProcessor):
             await self._emit_sources(query_id, [], status="no_match")
             await self.push_frame(frame, direction)
             return
+
+        if self._observability is not None:
+            try:
+                self._observability.collector.note_answer_stage("rag_start")
+            except Exception:  # noqa: BLE001
+                pass
 
         try:
             t0 = time.perf_counter()
@@ -211,6 +222,12 @@ class RetrievalProcessor(FrameProcessor):
         except Exception:  # noqa: BLE001
             fallback = "retrieval_failed"
             hits = []
+
+        if self._observability is not None:
+            try:
+                self._observability.collector.note_answer_stage("rag_end")
+            except Exception:  # noqa: BLE001
+                pass
 
         labeled: List[tuple[str, str]] = []
         sources_meta: List[dict] = []

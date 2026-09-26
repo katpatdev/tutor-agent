@@ -6,11 +6,11 @@
       "version": "v1",
       "status": "approved",
       "relative_path": "tutor/v1.md",
-      "sha256": "f4755fe619c6ecdbfeda25d4f9eb587e6711b6eca964d4e326483ee3ce466319",
+      "sha256": "3569941974e51718b9a176fe26309e0b627ce1b8cd8f6e1c829b1d9d0d03fcbd",
       "created_at": "2026-09-25T00:00:00Z",
       "approved": true,
       "parent_version": null,
-      "change_summary": "Initial approved tutor system prompt migrated from presentation_runtime.BASE_TUTOR_PROMPT"
+      "change_summary": "Natural conversational speaking pace; concise spoken replies; slow only on student request"
     },
     {
       "prompt_id": "judge_pedagogical",

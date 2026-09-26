@@ -52,8 +52,12 @@ QA_TRANSITION_PROMPT = (
 
 TTS_INSTRUCTIONS = (
     "You are a calm, clear science tutor speaking to students. "
-    "Use a moderately paced, friendly voice. Enunciate clearly."
+    "Speak at a natural, lively, friendly conversational pace. "
+    "Keep explanations concise. Enunciate clearly without dragging words."
 )
+
+NO_ANSWER_CONTINUE_TEXT = "No problem — let's continue."
+DEFAULT_NO_ANSWER_TIMEOUT_SECONDS = 10.0
 
 
 class OutputPurpose(Enum):
@@ -67,6 +71,7 @@ class OutputPurpose(Enum):
     QA_RESPONSE = auto()
     SAFETY_REDIRECT = auto()
     SAFETY_MESSAGE = auto()
+    NO_ANSWER_CONTINUE = auto()
 
 
 class FrameSink(Protocol):
@@ -86,6 +91,7 @@ _STOPPABLE_PURPOSES = frozenset(
         OutputPurpose.INTERRUPTION_ANSWER,
         OutputPurpose.QA_TRANSITION,
         OutputPurpose.QA_RESPONSE,
+        OutputPurpose.NO_ANSWER_CONTINUE,
     }
 )
 
@@ -108,6 +114,7 @@ class PresentationRuntime:
         messages_append_frame_factory: Optional[Any] = None,
         on_state_changed: Optional[StateChangedCallback] = None,
         narration_max_characters: int = DEFAULT_MAX_SEGMENT_CHARACTERS,
+        no_answer_timeout_seconds: float = DEFAULT_NO_ANSWER_TIMEOUT_SECONDS,
     ) -> None:
         if not slide_prompts:
             raise ValueError("slide_prompts must be non-empty")
@@ -121,14 +128,22 @@ class PresentationRuntime:
         self._frame_sink = frame_sink
         self._controller = controller or LessonController(slide_count=count)
         self._narration_max_characters = narration_max_characters
+        # Allow sub-second values in offline tests; production env loader clamps 5–30s.
+        self._no_answer_timeout_s = max(0.05, float(no_answer_timeout_seconds))
         self._id_counter = itertools.count(1)
         self._lesson_started = False
         self._session_ended = False
         self._output_purpose = OutputPurpose.NONE
         self._bot_speaking = False
         self._utterance_audible = False
-        self._suppress_next_bot_stopped = False
+        # Only suppress BotStopped when an audible playback was cancelled and a
+        # matching stop is therefore expected. Pre-audio cancels must not increment.
+        # _cancel_stop_pending prevents double-counting the same in-flight speech.
+        self._expected_suppressed_stops = 0
+        self._cancel_stop_pending = False
+        self._speaking_utterance_id: Optional[int] = None
         self._active_utterance_id = 0
+        self._answer_speech_units_remaining = 0
         self._qa_transition_queued = False
         self._presented_slide_instructions: set[int] = set()
         self._lock = asyncio.Lock()
@@ -145,6 +160,12 @@ class PresentationRuntime:
         self._resume_segment_pending = False
         self._narration_error: Optional[str] = None
 
+        self._awaiting_student_reply = False
+        self._pending_narration_after_wait = False
+        self._continue_after_no_answer = False
+        self._no_answer_task: Optional[asyncio.Task] = None
+        self._no_answer_armed_once_for_qa = False
+
         # Public counters intentionally remain simple integers for offline tests.
         self.plans_created = 0
         self.segments_generated = 0
@@ -153,8 +174,12 @@ class PresentationRuntime:
         self.segment_replays = 0
         self.stale_completions_ignored = 0
         self.cancelled_completions_suppressed = 0
+        self.pre_audio_cancel_without_stop = 0
+        self.output_safety_cancel_timeouts = 0
         self.narration_errors = 0
         self.segment_char_total = 0
+        self.no_answer_continuations = 0
+        self.answer_tts_units_emitted = 0
 
         # Factories allow offline tests without importing Pipecat frames.
         self._interruption_frame_factory = interruption_frame_factory
@@ -214,12 +239,152 @@ class PresentationRuntime:
     def set_on_state_changed(self, callback: Optional[StateChangedCallback]) -> None:
         self._on_state_changed = callback
 
+    def note_output_safety_cancel_timeout(self) -> None:
+        """Content-free counter when output-safety task cancel waits too long."""
+        self.output_safety_cancel_timeouts += 1
+        obs = self._observability
+        if obs is not None:
+            try:
+                obs.collector.note_answer_stage("output_safety_cancel_timeout")
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _current_playback_utterance_id(self) -> int:
+        if self._speaking_utterance_id is not None:
+            return self._speaking_utterance_id
+        return self._active_utterance_id
+
+    def _cancel_audible_playback_only(self) -> bool:
+        """Expect one suppressed BotStopped only when audio actually started.
+
+        Pre-audio cancellation (LLM buffering, no BotStartedSpeaking) must NOT
+        suppress a future answer's BotStoppedSpeaking. Calling this twice for the
+        same in-flight utterance must not double-count.
+        """
+        if self._bot_speaking or self._utterance_audible:
+            if not self._cancel_stop_pending:
+                self._expected_suppressed_stops += 1
+                self._cancel_stop_pending = True
+            self._utterance_audible = False
+            self._answer_speech_units_remaining = 0
+            return True
+        self.pre_audio_cancel_without_stop += 1
+        self._answer_speech_units_remaining = 0
+        return False
+
+    def _advance_utterance_generation(self) -> None:
+        """Mint a new utterance id so the next speech is distinct from cancelled ones."""
+        self._active_utterance_id += 1
+
+    def begin_moderated_answer_speech(self, unit_count: int) -> None:
+        """Register how many TTS units belong to the forthcoming moderated answer."""
+        count = max(1, int(unit_count))
+        self._advance_utterance_generation()
+        self._answer_speech_units_remaining = count
+        self.answer_tts_units_emitted += count
+        if self._output_purpose is OutputPurpose.NONE:
+            mode = self._controller.state.mode
+            if mode is LessonMode.ANSWERING:
+                self._output_purpose = OutputPurpose.INTERRUPTION_ANSWER
+            elif mode is LessonMode.QA_MODE:
+                self._output_purpose = OutputPurpose.QA_RESPONSE
+
     def should_segment_approved_output(self) -> bool:
         """Return whether an approved LLM response belongs to slide narration."""
         return (
             self._output_purpose in _NARRATION_PURPOSES
             and self._awaiting_narration_llm
         )
+
+    def should_accept_llm_spoken_answer(self) -> bool:
+        """Whether buffered LLM text may be released to TTS as an answer/Q&A reply.
+
+        Prevents a late answer generation (e.g. after Pause during ANSWERING and
+        Resume back to narration) from speaking over resumed segments.
+        """
+        if self._session_ended:
+            return False
+        mode = self._controller.state.mode
+        if mode is LessonMode.PAUSED or mode is LessonMode.FINISHED:
+            return False
+        if mode is LessonMode.PRESENTING:
+            # Narration owns the channel after return-from-answer / resume.
+            return False
+        if mode is LessonMode.ANSWERING:
+            return True
+        if mode is LessonMode.QA_MODE:
+            return True
+        if mode is LessonMode.INTERRUPTED:
+            return True
+        # IDLE (and similar): allow unit tests / frames before lesson start.
+        return mode is LessonMode.IDLE
+
+    def _cancel_no_answer_wait(self) -> None:
+        self._awaiting_student_reply = False
+        self._pending_narration_after_wait = False
+        task = self._no_answer_task
+        self._no_answer_task = None
+        if task is not None and not task.done():
+            task.cancel()
+
+    def _arm_no_answer_wait(self, *, continue_narration: bool) -> None:
+        """Start a one-shot thinking timer; cancelled when student speech begins."""
+        self._cancel_no_answer_wait()
+        if self._session_ended or self._bot_speaking:
+            return
+        if self._safety_status is not SafetyStatus.NORMAL:
+            return
+        mode = self._controller.state.mode
+        if mode is LessonMode.QA_MODE and self._no_answer_armed_once_for_qa:
+            return
+        if mode not in {LessonMode.PRESENTING, LessonMode.QA_MODE}:
+            return
+        self._awaiting_student_reply = True
+        self._pending_narration_after_wait = continue_narration
+        if mode is LessonMode.QA_MODE:
+            self._no_answer_armed_once_for_qa = True
+        timeout = self._no_answer_timeout_s
+
+        async def _fire() -> None:
+            try:
+                await asyncio.sleep(timeout)
+            except asyncio.CancelledError:
+                return
+            await self._on_no_answer_timeout()
+
+        self._no_answer_task = asyncio.create_task(_fire())
+
+    async def _on_no_answer_timeout(self) -> None:
+        async with self._lock:
+            if not self._awaiting_student_reply:
+                return
+            if self._session_ended or self._bot_speaking:
+                self._awaiting_student_reply = False
+                return
+            if self._safety_status is not SafetyStatus.NORMAL:
+                self._awaiting_student_reply = False
+                return
+            mode = self._controller.state.mode
+            if mode not in {LessonMode.PRESENTING, LessonMode.QA_MODE}:
+                self._awaiting_student_reply = False
+                return
+            continue_narration = self._pending_narration_after_wait
+            self._awaiting_student_reply = False
+            self._pending_narration_after_wait = False
+            self._no_answer_task = None
+            self._continue_after_no_answer = continue_narration
+            self.no_answer_continuations += 1
+            self._output_purpose = OutputPurpose.NO_ANSWER_CONTINUE
+            self._utterance_audible = False
+            self._active_utterance_id += 1
+            await self._queue_tts_speak(NO_ANSWER_CONTINUE_TEXT)
+            await self._notify_state_changed()
+            obs = self._observability
+            if obs is not None:
+                try:
+                    obs.collector.note_answer_stage("no_answer_continue")
+                except Exception:  # noqa: BLE001
+                    pass
 
     async def accept_approved_narration(self, text: str) -> None:
         """Build and begin a segment plan from safety-approved narration text."""
@@ -295,8 +460,8 @@ class PresentationRuntime:
         plan.active_status = SegmentStatus.ACTIVE
         plan.segment_queued = True
         self._queued_generation_id = plan.generation_id
+        self._advance_utterance_generation()
         self._utterance_audible = False
-        self._suppress_next_bot_stopped = False
         self._resume_segment_pending = False
         if replay:
             self.segment_replays += 1
@@ -394,10 +559,23 @@ class PresentationRuntime:
             )
             if event.type is LessonEventType.USER_INTERRUPTED:
                 obs.collector.note_interruption()
+                obs.collector.note_answer_stage("interruption")
+            elif event.type is LessonEventType.ANSWER_STARTED:
+                obs.collector.note_answer_stage("answer_started")
             elif event.type is LessonEventType.ANSWER_COMPLETED:
                 obs.collector.note_answer()
+                obs.collector.note_answer_stage("answer_playback_complete")
+                obs.collector.note_answer_stage("return_to_narration")
             elif event.type is LessonEventType.SLIDE_COMPLETED:
                 obs.collector.note_slide_completed()
+            elif event.type is LessonEventType.PAUSE_REQUESTED and (
+                result.effect is LessonEffect.STOP_NARRATION
+            ):
+                obs.collector.note_pause()
+            elif event.type is LessonEventType.RESUME_REQUESTED and (
+                result.effect is not LessonEffect.NO_ACTION
+            ):
+                obs.collector.note_resume()
             elif result.effect is LessonEffect.PRESENT_SLIDE:
                 obs.collector.note_slide_started()
             elif result.effect is LessonEffect.ENTER_QA:
@@ -423,34 +601,42 @@ class PresentationRuntime:
     async def _stop_active_narration_for_navigation(self) -> None:
         """Stop audible output before a slide jump; do not complete the prior slide."""
         if self._bot_speaking or self._output_purpose in _STOPPABLE_PURPOSES:
-            self._suppress_next_bot_stopped = True
-            self._utterance_audible = False
+            self._cancel_audible_playback_only()
             self._output_purpose = OutputPurpose.NONE
+            self._advance_utterance_generation()
             await self._queue_interruption()
 
     async def _interpret_effect(self, effect: LessonEffect) -> None:
         if effect is LessonEffect.PRESENT_SLIDE:
+            self._cancel_no_answer_wait()
             await self._begin_slide_narration(resuming=False)
         elif effect is LessonEffect.RESUME_NARRATION:
+            self._cancel_no_answer_wait()
             await self._begin_slide_narration(resuming=True)
         elif effect is LessonEffect.STOP_NARRATION:
+            self._cancel_no_answer_wait()
             active_purpose = self._output_purpose
-            self._suppress_next_bot_stopped = (
-                self._bot_speaking or active_purpose in _STOPPABLE_PURPOSES
-            )
+            # Suppress only if audio actually started; pre-audio cancel must not
+            # consume the forthcoming interruption-answer completion.
+            self._cancel_audible_playback_only()
             if active_purpose in _NARRATION_PURPOSES:
                 self._mark_active_segment_interrupted()
                 plan = self._narration_plan
                 if plan is not None:
                     plan.segment_queued = False
-            self._utterance_audible = False
             self._output_purpose = OutputPurpose.NONE
+            self._advance_utterance_generation()
             await self._queue_interruption()
         elif effect is LessonEffect.BEGIN_ANSWER:
+            self._cancel_no_answer_wait()
             self._output_purpose = OutputPurpose.INTERRUPTION_ANSWER
+            self._answer_speech_units_remaining = 0
         elif effect is LessonEffect.ENTER_QA:
+            self._cancel_no_answer_wait()
+            self._no_answer_armed_once_for_qa = False
             await self._queue_qa_transition_once()
         elif effect is LessonEffect.SESSION_FINISHED:
+            self._cancel_no_answer_wait()
             self._output_purpose = OutputPurpose.NONE
             self._session_ended = True
         elif effect is LessonEffect.NO_ACTION:
@@ -520,6 +706,8 @@ class PresentationRuntime:
         async with self._lock:
             self._bot_speaking = True
             self._utterance_audible = True
+            self._speaking_utterance_id = self._active_utterance_id
+            self._cancel_stop_pending = False
             if (
                 self._controller.state.mode is LessonMode.QA_MODE
                 and self._output_purpose is OutputPurpose.NONE
@@ -529,14 +717,17 @@ class PresentationRuntime:
     async def on_bot_stopped_speaking(self) -> None:
         async with self._lock:
             self._bot_speaking = False
-            if self._suppress_next_bot_stopped:
+            self._speaking_utterance_id = None
+            if self._expected_suppressed_stops > 0:
+                self._expected_suppressed_stops -= 1
+                self._cancel_stop_pending = False
                 self.cancelled_completions_suppressed += 1
-                self._suppress_next_bot_stopped = False
                 self._utterance_audible = False
                 return
             if not self._utterance_audible:
                 return
             self._utterance_audible = False
+            self._cancel_stop_pending = False
 
             purpose = self._output_purpose
             if purpose is OutputPurpose.SAFETY_REDIRECT:
@@ -560,6 +751,10 @@ class PresentationRuntime:
             if purpose in _NARRATION_PURPOSES:
                 await self._complete_active_segment()
             elif purpose is OutputPurpose.INTERRUPTION_ANSWER:
+                if self._answer_speech_units_remaining > 1:
+                    self._answer_speech_units_remaining -= 1
+                    return
+                self._answer_speech_units_remaining = 0
                 await self._dispatch(
                     LessonEvent(
                         type=LessonEventType.ANSWER_COMPLETED,
@@ -569,8 +764,22 @@ class PresentationRuntime:
                     )
                 )
             elif purpose in {OutputPurpose.QA_TRANSITION, OutputPurpose.QA_RESPONSE}:
+                if self._answer_speech_units_remaining > 1:
+                    self._answer_speech_units_remaining -= 1
+                    return
+                self._answer_speech_units_remaining = 0
                 self._output_purpose = OutputPurpose.NONE
-
+                self._arm_no_answer_wait(continue_narration=False)
+            elif purpose is OutputPurpose.NO_ANSWER_CONTINUE:
+                self._output_purpose = OutputPurpose.NONE
+                if (
+                    self._continue_after_no_answer
+                    and self._controller.state.mode is LessonMode.PRESENTING
+                ):
+                    self._continue_after_no_answer = False
+                    await self._queue_active_segment()
+                else:
+                    self._continue_after_no_answer = False
     async def _complete_active_segment(self) -> None:
         plan = self._narration_plan
         if (
@@ -587,6 +796,7 @@ class PresentationRuntime:
         if index in plan.completed_indexes or plan.active_status is not SegmentStatus.ACTIVE:
             return
 
+        completed_text = plan.segments[index].text.strip()
         plan.completed_indexes = plan.completed_indexes | {index}
         plan.segment_queued = False
         plan.active_status = SegmentStatus.COMPLETED
@@ -608,18 +818,35 @@ class PresentationRuntime:
         plan.active_status = SegmentStatus.PENDING
         self._resume_segment_pending = True
         if self._controller.state.mode is LessonMode.PRESENTING:
-            await self._queue_active_segment()
+            # Comprehension-check style segments end with '?'; wait briefly for
+            # a student reply before continuing (one-shot timeout).
+            if completed_text.endswith("?"):
+                self._output_purpose = OutputPurpose.NONE
+                self._arm_no_answer_wait(continue_narration=True)
+            else:
+                await self._queue_active_segment()
         await self._notify_state_changed()
 
     async def on_user_started_speaking(self) -> None:
         async with self._lock:
+            # Genuine speech cancels the no-answer thinking timer immediately.
+            was_awaiting = self._awaiting_student_reply
+            pending_narration = self._pending_narration_after_wait
+            self._cancel_no_answer_wait()
             if self._safety_status is SafetyStatus.HOLD:
                 return
+            if self._controller.state.mode is LessonMode.QA_MODE:
+                # Student is answering in Q&A; do not interrupt their turn.
+                return
             if self._controller.state.mode is LessonMode.ANSWERING:
-                self._suppress_next_bot_stopped = True
-                self._utterance_audible = False
-                await self._queue_interruption()
+                # Only suppress the answer currently playing. Silence in ANSWERING
+                # (or a prior pre-audio cancel) must not eat the next completion.
+                if self._bot_speaking or self._utterance_audible:
+                    self._cancel_audible_playback_only()
+                    await self._queue_interruption()
+                self._advance_utterance_generation()
                 self._output_purpose = OutputPurpose.INTERRUPTION_ANSWER
+                self._answer_speech_units_remaining = 0
                 return
             if self._controller.state.mode is not LessonMode.PRESENTING:
                 return
@@ -629,6 +856,11 @@ class PresentationRuntime:
                 OutputPurpose.NONE,
             }:
                 return
+
+            # Speech during a post-question wait is treated as an interruption
+            # answer (not as a silent timeout continuation).
+            if was_awaiting and pending_narration:
+                pass
 
             self._mark_active_segment_interrupted()
             cursor = self._logical_cursor()
@@ -659,11 +891,10 @@ class PresentationRuntime:
                 else TEMPLATES["moderation_unavailable"]
             )
             notice = decision.notice or text
-            self._suppress_next_bot_stopped = self._bot_speaking or (
-                self._output_purpose is not OutputPurpose.NONE
-            )
-            if self._suppress_next_bot_stopped:
+            audible = self._cancel_audible_playback_only()
+            if audible or self._output_purpose is not OutputPurpose.NONE:
                 await self._queue_interruption()
+            self._advance_utterance_generation()
 
             if decision.decision is SafetyDecision.SAFETY_HOLD:
                 self._safety_status = SafetyStatus.HOLD
@@ -762,6 +993,7 @@ class PresentationRuntime:
 
     async def end_session(self) -> Optional[TransitionResult]:
         async with self._lock:
+            self._cancel_no_answer_wait()
             self._invalidate_narration_plan()
             if self._session_ended or self._controller.state.mode is LessonMode.FINISHED:
                 return None
