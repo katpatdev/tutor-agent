@@ -98,12 +98,17 @@ Edit `.env` and set your real OpenAI API key as the value of `OPENAI_API_KEY` (l
 ```bash
 cd /path/to/tutor-agent
 uv run python main.py
+# equivalent packaged entry points:
+# uv run python -m tutor_agent.main
+# uv run tutor-agent
 ```
 
 Server listens on `0.0.0.0:7860`.
 
 - `POST /connect` returns `{"ws_url": "ws://localhost:7860/ws"}`.
 - WebSocket endpoint: `/ws`.
+
+Application code lives under `src/tutor_agent/` (see `docs/PROJECT_STRUCTURE.md`). The root `main.py` is a compatibility launcher only.
 
 ## Start the frontend
 
@@ -126,7 +131,7 @@ Backend imports (no OpenAI calls):
 ```bash
 cd /path/to/tutor-agent
 uv run python -c "import pipecat, fastapi, uvicorn; print('Core backend imports OK')"
-uv run python -c "import agent, main; print('Application imports OK')"
+uv run python -c "import tutor_agent.agent, tutor_agent.main; print('Application imports OK')"
 ```
 
 Frontend typecheck and build:

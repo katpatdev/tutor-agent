@@ -7,10 +7,10 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, File, Request, UploadFile
 from fastapi.responses import JSONResponse
 
-from embedding_service import EmbeddingClient, RagConfig
-from knowledge_ingestion import SUPPORTED_EXTENSIONS, IngestionError, ingest_document
-from knowledge_store import InMemoryKnowledgeStore, SHARED_KNOWLEDGE_STORE
-from moderation_service import ModerationClient
+from tutor_agent.knowledge.embedding_service import EmbeddingClient, RagConfig
+from tutor_agent.knowledge.knowledge_ingestion import SUPPORTED_EXTENSIONS, IngestionError, ingest_document
+from tutor_agent.knowledge.knowledge_store import InMemoryKnowledgeStore, SHARED_KNOWLEDGE_STORE
+from tutor_agent.safety.moderation_service import ModerationClient
 
 
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])

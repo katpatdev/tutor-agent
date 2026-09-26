@@ -7,16 +7,16 @@ from typing import List, Optional
 
 from loguru import logger
 
-from session_config import SessionDataConfig
-from session_metrics import SessionMetricsCollector
-from session_store import (
+from tutor_agent.observability.session_config import SessionDataConfig
+from tutor_agent.observability.session_metrics import SessionMetricsCollector
+from tutor_agent.observability.session_store import (
     RagEventRecord,
     SafetyEventRecord,
     SessionStore,
     SessionStoreError,
     TranscriptEventRecord,
 )
-from transcript_redaction import RedactionError, redact_text
+from tutor_agent.safety.transcript_redaction import RedactionError, redact_text
 
 
 class SessionObservability:

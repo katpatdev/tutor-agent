@@ -42,7 +42,7 @@ Do not equate Iteration 6 design docs with the original assignment text. RAG is 
 
 | Requirement | Implementation | Tests | Status |
 |-------------|----------------|-------|--------|
-| Pipecat-only / OpenAI-only | `agent.py`, clients | suite | complete offline |
+| Pipecat-only / OpenAI-only | `tutor_agent.agent`, clients | suite | complete offline |
 | Interruption → answer → topic recovery | controller + runtime | narration / 10.2 tests | complete offline; live unverified |
 | Final slide → Q&A | runtime | runtime tests | complete offline; live unverified |
 | Pause / Resume (segment) | protocol + runtime | frontend + backend | complete (segment); exact resume known limitation |

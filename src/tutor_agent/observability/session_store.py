@@ -13,8 +13,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
-from session_config import SessionDataConfig
-from session_metrics import SessionMetricsCollector
+from tutor_agent.observability.session_config import SessionDataConfig
+from tutor_agent.observability.session_metrics import SessionMetricsCollector
 
 
 SCHEMA_VERSION = 2

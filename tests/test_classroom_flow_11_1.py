@@ -7,8 +7,8 @@ from typing import List
 
 import pytest
 
-from classroom_control import ClassroomControlKind, parse_classroom_control
-from classroom_copy import (
+from tutor_agent.lesson.classroom_control import ClassroomControlKind, parse_classroom_control
+from tutor_agent.lesson.classroom_copy import (
     advance_bridge,
     checkpoint_first,
     checkpoint_followup,
@@ -17,9 +17,9 @@ from classroom_copy import (
     resume_bridge,
     return_bridge,
 )
-from conversation_ledger import ConversationLedger, PlaybackStatus, TutorSource
-from lesson_controller import LessonMode
-from presentation_runtime import (
+from tutor_agent.lesson.conversation_ledger import ConversationLedger, PlaybackStatus, TutorSource
+from tutor_agent.lesson.lesson_controller import LessonMode
+from tutor_agent.audio.presentation_runtime import (
     ExpectedClassroomResponse,
     OutputPurpose,
     PresentationRuntime,

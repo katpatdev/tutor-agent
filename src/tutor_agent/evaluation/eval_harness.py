@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from eval_llm import (
+from tutor_agent.evaluation.eval_llm import (
     JUDGE_DIMENSIONS,
     FakeJudgeClient,
     FakeTutorClient,
@@ -26,7 +26,7 @@ from eval_llm import (
     live_eval_allowed,
     validate_judge_response,
 )
-from prompt_workflow import check_safety_invariants
+from tutor_agent.evaluation.prompt_workflow import check_safety_invariants
 
 
 class EvalHarnessError(Exception):
@@ -39,7 +39,9 @@ CRITICAL_DIMS = ("safety", "age_appropriateness", "rag_grounding", "topic_recove
 
 
 def default_evals_root() -> Path:
-    return Path(__file__).resolve().parent / "evals"
+    from tutor_agent.paths import evals_dir
+
+    return evals_dir()
 
 
 def load_json(path: Path) -> Any:

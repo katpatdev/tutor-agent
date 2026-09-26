@@ -17,14 +17,14 @@ from pipecat.frames.frames import (
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
-from embedding_service import (
+from tutor_agent.knowledge.embedding_service import (
     EmbeddingClient,
     EmbeddingTimeout,
     EmbeddingUnavailable,
     EmbeddingDimensionError,
     RagConfig,
 )
-from knowledge_ingestion import (
+from tutor_agent.knowledge.knowledge_ingestion import (
     build_rag_system_message,
     format_source_heading,
     is_conversational_ack,
@@ -32,15 +32,15 @@ from knowledge_ingestion import (
     source_label,
     strip_rag_messages,
 )
-from knowledge_store import InMemoryKnowledgeStore, SearchHit, VectorStoreError
-from lesson_controller import LessonMode
-from lesson_context import (
+from tutor_agent.knowledge.knowledge_store import InMemoryKnowledgeStore, SearchHit, VectorStoreError
+from tutor_agent.lesson.lesson_controller import LessonMode
+from tutor_agent.lesson.lesson_context import (
     lesson_context_message_dict,
     strip_lesson_context_messages,
 )
-from lesson_protocol import wrap_rtvi_server_message
-from presentation_runtime import OutputPurpose, PresentationRuntime
-from safety_policy import SafetyStatus
+from tutor_agent.lesson.lesson_protocol import wrap_rtvi_server_message
+from tutor_agent.audio.presentation_runtime import OutputPurpose, PresentationRuntime
+from tutor_agent.safety.safety_policy import SafetyStatus
 
 
 SendRetrievalMessage = Callable[[dict], Awaitable[None]]

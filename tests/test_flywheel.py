@@ -10,8 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from curriculum_recommendations import recommendations_from_signals
-from eval_harness import (
+from tutor_agent.evaluation.curriculum_recommendations import recommendations_from_signals
+from tutor_agent.evaluation.eval_harness import (
     apply_promotion_gates,
     assert_no_historical_transcripts,
     load_cases,
@@ -19,7 +19,7 @@ from eval_harness import (
     run_offline_fixtures,
     validate_case_suite,
 )
-from eval_llm import (
+from tutor_agent.evaluation.eval_llm import (
     FakeJudgeClient,
     FakeOptimizerClient,
     FakeTutorClient,
@@ -27,8 +27,8 @@ from eval_llm import (
     live_eval_allowed,
     validate_judge_response,
 )
-from flywheel import FlywheelError, analyze
-from friction_analyzer import (
+from tutor_agent.evaluation.flywheel import FlywheelError, analyze
+from tutor_agent.evaluation.friction_analyzer import (
     FrictionSignal,
     FrictionSeverity,
     InterventionCategory,
@@ -38,25 +38,25 @@ from friction_analyzer import (
     normalize_question,
     report_contains_transcript_text,
 )
-from presentation_runtime import BASE_TUTOR_PROMPT
-from prompt_registry import (
+from tutor_agent.audio.presentation_runtime import BASE_TUTOR_PROMPT
+from tutor_agent.evaluation.prompt_registry import (
     PromptRegistryError,
     candidate_dir_is_ignored_by_runtime,
     load_active_tutor_prompt,
     load_prompt,
     sha256_text,
 )
-from prompt_workflow import (
+from tutor_agent.evaluation.prompt_workflow import (
     SAFETY_INVARIANT_APPENDIX,
     build_candidate_offline,
     build_optimizer_request_messages,
     check_safety_invariants,
     live_generation_allowed,
 )
-from session_config import SessionDataConfig
-from session_metrics import SessionMetricsCollector
-from session_observability import SessionObservability
-from session_store import SCHEMA_VERSION, SessionStore, SessionStoreError
+from tutor_agent.observability.session_config import SessionDataConfig
+from tutor_agent.observability.session_metrics import SessionMetricsCollector
+from tutor_agent.observability.session_observability import SessionObservability
+from tutor_agent.observability.session_store import SCHEMA_VERSION, SessionStore, SessionStoreError
 
 
 PROD_DB = Path("data/tutor_sessions.sqlite3")
@@ -645,9 +645,9 @@ def test_live_mode_gates():
 
 def test_offline_mode_never_initializes_openai():
     # Importing eval modules must not construct OpenAI clients.
-    import eval_harness
-    import eval_llm
-    import flywheel
+    import tutor_agent.evaluation.eval_harness as eval_harness
+    import tutor_agent.evaluation.eval_llm as eval_llm
+    import tutor_agent.evaluation.flywheel as flywheel
     src = Path(eval_llm.__file__).read_text(encoding="utf-8")
     # Fake clients exist; OpenAI import is inside production class __init__ only.
     assert "from openai import AsyncOpenAI" in src

@@ -8,21 +8,21 @@ from typing import Any, List, Optional
 
 import pytest
 
-from classroom_control import (
+from tutor_agent.lesson.classroom_control import (
     ClassroomControlKind,
     parse_classroom_control,
     parse_navigation_intent,
 )
-from lesson_context import (
+from tutor_agent.lesson.lesson_context import (
     LESSON_CONTEXT_BEGIN,
     build_lesson_context_snapshot,
     is_lesson_context_message,
     lesson_context_message_dict,
     strip_lesson_context_messages,
 )
-from lesson_controller import LessonMode
-from narration_plan import SegmentStatus
-from presentation_runtime import (
+from tutor_agent.lesson.lesson_controller import LessonMode
+from tutor_agent.narration.narration_plan import SegmentStatus
+from tutor_agent.audio.presentation_runtime import (
     POST_ANSWER_INVITE_TEXT,
     POST_ANSWER_REMINDER_TEXT,
     OutputPurpose,
@@ -32,8 +32,8 @@ from presentation_runtime import (
     make_test_interruption_frame,
     make_test_transform_frame,
 )
-from tts_unit import TtsRecoveryConfig
-from voice_navigation import VoiceNavAction
+from tutor_agent.audio.tts_unit import TtsRecoveryConfig
+from tutor_agent.lesson.voice_navigation import VoiceNavAction
 
 
 @dataclass

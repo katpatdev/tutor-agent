@@ -5,8 +5,8 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 
-from knowledge_ingestion import is_conversational_ack, looks_like_question
-from lesson_controller import (
+from tutor_agent.knowledge.knowledge_ingestion import is_conversational_ack, looks_like_question
+from tutor_agent.lesson.lesson_controller import (
     LessonController,
     LessonEffect,
     LessonEvent,
@@ -14,7 +14,7 @@ from lesson_controller import (
     LessonMode,
     NarrationCursor,
 )
-from presentation_runtime import (
+from tutor_agent.audio.presentation_runtime import (
     NO_ANSWER_CONTINUE_TEXT,
     OutputPurpose,
     PresentationRuntime,
@@ -23,8 +23,8 @@ from presentation_runtime import (
     make_test_transform_frame,
     make_test_interruption_frame,
 )
-from session_metrics import SessionMetricsCollector
-from voice_runtime_config import (
+from tutor_agent.observability.session_metrics import SessionMetricsCollector
+from tutor_agent.audio.voice_runtime_config import (
     load_no_answer_timeout_seconds,
     load_tts_speech_speed,
     load_vad_runtime_config,
@@ -103,7 +103,7 @@ def test_a_answer_lifecycle_returns_from_answering() -> None:
         assert runtime.output_purpose is OutputPurpose.POST_ANSWER_INVITE
         await runtime.on_bot_started_speaking()
         await runtime.on_bot_stopped_speaking()
-        from classroom_control import parse_classroom_control
+        from tutor_agent.lesson.classroom_control import parse_classroom_control
         assert await runtime.handle_classroom_control(parse_classroom_control("Continue."))
         assert runtime.output_purpose is OutputPurpose.RESUME_BRIDGE
         await runtime.on_bot_started_speaking()
@@ -140,7 +140,7 @@ def test_b_cancelled_answer_completion_cannot_advance_or_duplicate() -> None:
         assert runtime.output_purpose is OutputPurpose.POST_ANSWER_INVITE
         await runtime.on_bot_started_speaking()
         await runtime.on_bot_stopped_speaking()
-        from classroom_control import parse_classroom_control
+        from tutor_agent.lesson.classroom_control import parse_classroom_control
         assert await runtime.handle_classroom_control(parse_classroom_control("Continue."))
         assert runtime.output_purpose is OutputPurpose.RESUME_BRIDGE
         await runtime.on_bot_started_speaking()
@@ -277,7 +277,7 @@ def test_g_slide_progression_after_interruption_answer() -> None:
         assert runtime.output_purpose is OutputPurpose.POST_ANSWER_INVITE
         await runtime.on_bot_started_speaking()
         await runtime.on_bot_stopped_speaking()
-        from classroom_control import parse_classroom_control
+        from tutor_agent.lesson.classroom_control import parse_classroom_control
         assert await runtime.handle_classroom_control(parse_classroom_control("Continue."))
         assert runtime.output_purpose is OutputPurpose.RESUME_BRIDGE
         await runtime.on_bot_started_speaking()

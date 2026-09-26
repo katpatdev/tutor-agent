@@ -12,12 +12,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agent import LessonLifecycleObserver
-from curriculum import SLIDES
-from lesson_controller import LessonMode
-from lesson_protocol import LessonProtocolSession, MSG_RESULT
-from narration_plan import segment_narration_text
-from presentation_runtime import (
+from tutor_agent.agent import LessonLifecycleObserver
+from tutor_agent.lesson.curriculum import SLIDES
+from tutor_agent.lesson.lesson_controller import LessonMode
+from tutor_agent.lesson.lesson_protocol import LessonProtocolSession, MSG_RESULT
+from tutor_agent.narration.narration_plan import segment_narration_text
+from tutor_agent.audio.presentation_runtime import (
     BASE_TUTOR_PROMPT,
     OutputPurpose,
     PresentationRuntime,
@@ -26,8 +26,8 @@ from presentation_runtime import (
     make_test_interruption_frame,
     make_test_transform_frame,
 )
-from prompt_registry import load_active_tutor_prompt, sha256_text
-from slide_narration_prompt import (
+from tutor_agent.evaluation.prompt_registry import load_active_tutor_prompt, sha256_text
+from tutor_agent.lesson.slide_narration_prompt import (
     SLIDE_NARRATION_MARKER,
     format_slide_narration_instruction,
     is_slide_narration_instruction,
@@ -220,7 +220,7 @@ def test_interruption_then_answer_completion_replays_correct_segment() -> None:
         assert runtime.output_purpose is OutputPurpose.POST_ANSWER_INVITE
         await runtime.on_bot_started_speaking()
         await runtime.on_bot_stopped_speaking()
-        from classroom_control import parse_classroom_control
+        from tutor_agent.lesson.classroom_control import parse_classroom_control
         assert await runtime.handle_classroom_control(parse_classroom_control("Continue."))
         assert runtime.output_purpose is OutputPurpose.RESUME_BRIDGE
         await runtime.on_bot_started_speaking()

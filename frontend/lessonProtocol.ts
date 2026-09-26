@@ -307,6 +307,12 @@ export class ConversationTracker {
     kind: 'created' | 'updated',
     entry: ConversationEntry
   ): boolean {
+    // Snapshot + incremental delivery and duplicate created/updated events
+    // must remain idempotent by entry_id (never by text).
+    const existing = this.byId.get(entry.entry_id);
+    if (existing) {
+      return this.upsert(entry, { allowStale: true });
+    }
     return this.upsert(entry, { allowStale: kind === 'updated' });
   }
 

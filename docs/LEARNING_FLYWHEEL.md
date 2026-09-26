@@ -25,9 +25,10 @@ Student consent covers **local redacted storage**, not external transcript analy
 ## Local friction analysis
 
 ```bash
-uv run python -m flywheel analyze
-uv run python -m flywheel analyze --output data/flywheel/friction-report.json
-uv run python -m flywheel analyze --include-local-redacted-examples --output data/flywheel/friction-report.json
+uv run python -m tutor_agent.evaluation.flywheel analyze
+uv run python -m tutor_agent.evaluation.flywheel analyze --output data/flywheel/friction-report.json
+uv run python -m tutor_agent.evaluation.flywheel analyze --include-local-redacted-examples --output data/flywheel/friction-report.json
+# equivalent: uv run tutor-flywheel analyze ...
 ```
 
 Signals (deterministic): repeated similar questions (Jaccard on normalized tokens), confusion cues, interruptions, backward navigation heuristics, pauses, early dropout, failed Q&A entry, RAG miss rate, safety redirects, high latency (engineering), long monologues, missing comprehension checks, simpler-wording requests.
@@ -43,8 +44,9 @@ Primary reports are content-free (no `redacted_text`). Optional local appendices
 ## Candidate workflow
 
 ```bash
-uv run python -m prompt_workflow generate-candidate --instructions "..."
-uv run python -m prompt_workflow check-invariants prompts/tutor/v1.md
+uv run python -m tutor_agent.evaluation.prompt_workflow generate-candidate --instructions "..."
+uv run python -m tutor_agent.evaluation.prompt_workflow check-invariants prompts/tutor/v1.md
+# equivalent: uv run tutor-prompt-workflow ...
 ```
 
 Candidates write under `data/prompt_candidates/` only. They are **not** added to `registry.json` automatically.

@@ -8,14 +8,14 @@ from typing import Any, List, Optional
 
 import pytest
 
-from classroom_control import (
+from tutor_agent.lesson.classroom_control import (
     ClassroomControlKind,
     parse_classroom_control,
     parse_navigation_intent,
 )
-from lesson_controller import LessonMode
-from narration_plan import SegmentStatus
-from presentation_runtime import (
+from tutor_agent.lesson.lesson_controller import LessonMode
+from tutor_agent.narration.narration_plan import SegmentStatus
+from tutor_agent.audio.presentation_runtime import (
     QA_CLOSING_TEXT,
     QA_FOLLOWUP_TEXT,
     QA_REMINDER_TEXT,
@@ -27,8 +27,8 @@ from presentation_runtime import (
     make_test_interruption_frame,
     make_test_transform_frame,
 )
-from tts_unit import OwnedSpeechUnit, SpeechUnitKind, TtsRecoveryConfig, is_tts_no_audio_error
-from voice_navigation import VoiceNavAction
+from tutor_agent.audio.tts_unit import OwnedSpeechUnit, SpeechUnitKind, TtsRecoveryConfig, is_tts_no_audio_error
+from tutor_agent.lesson.voice_navigation import VoiceNavAction
 
 
 @dataclass
@@ -513,7 +513,7 @@ def test_completed_unit_ignores_late_no_audio() -> None:
     asyncio.run(_run())
 
 def test_metrics_snapshot_has_no_lesson_text() -> None:
-    from session_metrics import SessionMetricsCollector
+    from tutor_agent.observability.session_metrics import SessionMetricsCollector
 
     c = SessionMetricsCollector()
     c.note_tts_delivery_snapshot(

@@ -8,8 +8,8 @@ from typing import Any, List
 
 import pytest
 
-from lesson_controller import LessonMode
-from presentation_runtime import (
+from tutor_agent.lesson.lesson_controller import LessonMode
+from tutor_agent.audio.presentation_runtime import (
     OutputPurpose,
     PresentationRuntime,
     RecordingFrameSink,
@@ -17,12 +17,12 @@ from presentation_runtime import (
     make_test_interruption_frame,
     make_test_transform_frame,
 )
-from tts_unit import (
+from tutor_agent.audio.tts_unit import (
     SpeechUnitKind,
     TtsRecoveryConfig,
     is_tts_no_audio_error,
 )
-from voice_navigation import VoiceNavAction, parse_voice_navigation
+from tutor_agent.lesson.voice_navigation import VoiceNavAction, parse_voice_navigation
 
 
 @dataclass
@@ -233,7 +233,7 @@ def test_voice_navigation_next_and_goto() -> None:
     async def _run() -> None:
         runtime, _, _ = make_runtime()
         await runtime.start_session()
-        from voice_navigation import VoiceNavIntent
+        from tutor_agent.lesson.voice_navigation import VoiceNavIntent
 
         ok = await runtime.handle_voice_navigation(
             VoiceNavIntent(action=VoiceNavAction.NEXT, raw="next slide")

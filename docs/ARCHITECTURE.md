@@ -4,29 +4,30 @@
 
 | Layer | Module | Owns |
 |-------|--------|------|
-| Curriculum metadata | `curriculum.py` | Slide index ↔ title ↔ prompt (8 slides) |
-| Deterministic control | `lesson_controller.py` | Mode, cursor, transitions, duplicate event IDs |
-| Narration plans | `narration_plan.py` | Deterministic segmentation, generation IDs, segment progress, resume-accuracy contract |
-| Runtime adapter | `presentation_runtime.py` | Per-session controller, narration plan lifecycle, output purpose, safety status gate, Pipecat effects, **per-session asyncio.Lock** |
-| Control protocol | `lesson_protocol.py` | Validate commands, dedupe `request_id`, state snapshots, WS URL helper |
-| Moderation abstraction | `moderation_service.py` | OpenAI Moderations client + normalized `ModerationResult` (no raw text stored) |
-| Safety policy | `safety_policy.py` | ALLOW / REDIRECT / SAFETY_HOLD, templates, in-memory safety events |
-| Safety processors | `safety_processors.py` | Input (post-STT) and output (pre-TTS) Pipecat processors |
-| Embeddings | `embedding_service.py` | OpenAI Embeddings client + RAG config |
-| Knowledge ingestion | `knowledge_ingestion.py` | Parse/chunk/moderate/embed (atomic) |
-| Knowledge store | `knowledge_store.py` | Process-local in-memory vectors |
-| Retrieval | `retrieval_processor.py` | Post-safety temporary RAG context |
-| Knowledge HTTP | `knowledge_api.py` | `/knowledge/documents`, `/knowledge/status` |
-| Session metrics | `session_metrics.py` | Per-session collectors + disconnect report |
-| Session store | `session_store.py` | Local SQLite persistence |
-| Transcript redaction | `transcript_redaction.py` | Deterministic PII-ish placeholders |
-| Session observability | `session_observability.py` | Narrow facade for metrics + optional persistence |
-| Session export CLI | `session_export.py` | Local sanitized JSONL export |
-| Prompt registry | `prompt_registry.py` + `prompts/` | Approved versioned tutor/judge prompts |
-| Friction / flywheel | `friction_analyzer.py`, `curriculum_recommendations.py`, `flywheel.py` | Local consented analysis (no OpenAI on transcripts) |
-| Prompt candidates | `prompt_workflow.py` | Reviewable candidates under `data/` (never auto-activate) |
-| Eval harness | `eval_llm.py`, `eval_harness.py`, `evals/` | Synthetic suite + offline fixtures + gated live |
-| Pipeline wiring | `agent.py` | Transport/STT/LLM/TTS, observer, RTVI message bridge, safety + retrieval + session lifecycle |
+| Curriculum metadata | `tutor_agent.lesson.curriculum` | Slide index ↔ title ↔ prompt (8 slides) |
+| Deterministic control | `tutor_agent.lesson.lesson_controller` | Mode, cursor, transitions, duplicate event IDs |
+| Narration plans | `tutor_agent.narration.narration_plan` | Deterministic segmentation, generation IDs, segment progress, resume-accuracy contract |
+| Runtime adapter | `tutor_agent.audio.presentation_runtime` | Per-session controller, narration plan lifecycle, output purpose, safety status gate, Pipecat effects, **per-session asyncio.Lock** |
+| Control protocol | `tutor_agent.lesson.lesson_protocol` | Validate commands, dedupe `request_id`, state snapshots, WS URL helper |
+| Moderation abstraction | `tutor_agent.safety.moderation_service` | OpenAI Moderations client + normalized `ModerationResult` (no raw text stored) |
+| Safety policy | `tutor_agent.safety.safety_policy` | ALLOW / REDIRECT / SAFETY_HOLD, templates, in-memory safety events |
+| Safety processors | `tutor_agent.safety.safety_processors` | Input (post-STT) and output (pre-TTS) Pipecat processors |
+| Embeddings | `tutor_agent.knowledge.embedding_service` | OpenAI Embeddings client + RAG config |
+| Knowledge ingestion | `tutor_agent.knowledge.knowledge_ingestion` | Parse/chunk/moderate/embed (atomic) |
+| Knowledge store | `tutor_agent.knowledge.knowledge_store` | Process-local in-memory vectors |
+| Retrieval | `tutor_agent.knowledge.retrieval_processor` | Post-safety temporary RAG context |
+| Knowledge HTTP | `tutor_agent.knowledge.knowledge_api` | `/knowledge/documents`, `/knowledge/status` |
+| Session metrics | `tutor_agent.observability.session_metrics` | Per-session collectors + disconnect report |
+| Session store | `tutor_agent.observability.session_store` | Local SQLite persistence |
+| Transcript redaction | `tutor_agent.safety.transcript_redaction` | Deterministic PII-ish placeholders |
+| Session observability | `tutor_agent.observability.session_observability` | Narrow facade for metrics + optional persistence |
+| Session export CLI | `tutor_agent.observability.session_export` | Local sanitized JSONL export |
+| Prompt registry | `tutor_agent.evaluation.prompt_registry` + `prompts/` | Approved versioned tutor/judge prompts |
+| Friction / flywheel | `tutor_agent.evaluation.friction_analyzer`, `curriculum_recommendations`, `flywheel` | Local consented analysis (no OpenAI on transcripts) |
+| Prompt candidates | `tutor_agent.evaluation.prompt_workflow` | Reviewable candidates under `data/` (never auto-activate) |
+| Eval harness | `tutor_agent.evaluation.eval_llm`, `eval_harness`, `evals/` | Synthetic suite + offline fixtures + gated live |
+| Pipeline wiring | `tutor_agent.agent` | Transport/STT/LLM/TTS, observer, RTVI message bridge, safety + retrieval + session lifecycle |
+| HTTP entry | `tutor_agent.main` (+ root `main.py` launcher) | FastAPI app, health/connect/knowledge routes, lifespan |
 | Frontend protocol | `frontend/lessonProtocol.ts` | Parse/create envelopes, sequence tracking (no DOM) |
 | Frontend knowledge | `frontend/knowledgeProtocol.ts` | Upload/status/retrieval parsing (no secrets) |
 | Frontend UI | `frontend/app.ts` | Controls + safety notice + knowledge upload; **server state is authoritative** |

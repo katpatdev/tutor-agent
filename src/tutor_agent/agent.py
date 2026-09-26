@@ -40,28 +40,28 @@ from pipecat.transports.websocket.fastapi import (
     FastAPIWebsocketTransport,
 )
 
-from curriculum import slide_prompts, TOTAL_SLIDES
-from voice_navigation_processor import VoiceNavigationProcessor
-from embedding_service import OpenAIEmbeddingClient, load_rag_config
-from knowledge_store import SHARED_KNOWLEDGE_STORE
-from lesson_protocol import LessonProtocolSession
-from moderation_service import OpenAIModerationClient, load_safety_config
-from narration_prefetch import NarrationPrefetchCache
-from presentation_runtime import (
+from tutor_agent.lesson.curriculum import slide_prompts, TOTAL_SLIDES
+from tutor_agent.lesson.voice_navigation_processor import VoiceNavigationProcessor
+from tutor_agent.knowledge.embedding_service import OpenAIEmbeddingClient, load_rag_config
+from tutor_agent.knowledge.knowledge_store import SHARED_KNOWLEDGE_STORE
+from tutor_agent.lesson.lesson_protocol import LessonProtocolSession
+from tutor_agent.safety.moderation_service import OpenAIModerationClient, load_safety_config
+from tutor_agent.narration.narration_prefetch import NarrationPrefetchCache
+from tutor_agent.audio.presentation_runtime import (
     ACTIVE_TUTOR_PROMPT_HASH,
     ACTIVE_TUTOR_PROMPT_VERSION,
     BASE_TUTOR_PROMPT,
     TTS_INSTRUCTIONS,
     PresentationRuntime,
 )
-from safety_policy import SafetyDecision, SafetySource, evaluate_moderation
-from narration_plan import load_narration_max_characters
-from retrieval_processor import RetrievalProcessor, SessionRetrievalState
-from safety_processors import InputSafetyProcessor, OutputSafetyProcessor
-from session_config import load_session_data_config
-from session_observability import SessionObservability
-from session_store import CURRICULUM_VERSION, SessionStore, SessionStoreError
-from voice_runtime_config import (
+from tutor_agent.safety.safety_policy import SafetyDecision, SafetySource, evaluate_moderation
+from tutor_agent.narration.narration_plan import load_narration_max_characters
+from tutor_agent.knowledge.retrieval_processor import RetrievalProcessor, SessionRetrievalState
+from tutor_agent.safety.safety_processors import InputSafetyProcessor, OutputSafetyProcessor
+from tutor_agent.observability.session_config import load_session_data_config
+from tutor_agent.observability.session_observability import SessionObservability
+from tutor_agent.observability.session_store import CURRICULUM_VERSION, SessionStore, SessionStoreError
+from tutor_agent.audio.voice_runtime_config import (
     load_lesson_followup_wait_seconds,
     load_no_answer_timeout_seconds,
     load_qa_silence_timeout_seconds,

@@ -9,21 +9,21 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import List, Optional, Sequence, Tuple
 
-from embedding_service import (
+from tutor_agent.knowledge.embedding_service import (
     EmbeddingClient,
     EmbeddingDimensionError,
     EmbeddingTimeout,
     EmbeddingUnavailable,
     RagConfig,
 )
-from knowledge_store import DocumentRecord, InMemoryKnowledgeStore, StoredChunk
-from moderation_service import (
+from tutor_agent.knowledge.knowledge_store import DocumentRecord, InMemoryKnowledgeStore, StoredChunk
+from tutor_agent.safety.moderation_service import (
     ModerationClient,
     ModerationResult,
     ModerationTimeout,
     ModerationUnavailable,
 )
-from safety_policy import (
+from tutor_agent.safety.safety_policy import (
     GRAPHIC_CATEGORIES,
     OTHER_REDIRECT_CATEGORIES,
     SELF_HARM_CATEGORIES,

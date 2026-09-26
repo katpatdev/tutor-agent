@@ -20,12 +20,12 @@ from pipecat.metrics.metrics import (
     TTSUsageMetricsData,
 )
 
-from session_config import SessionConfigError, load_session_data_config
-from session_export import cmd_export, cmd_summary, main as export_main
-from session_metrics import SessionMetricsCollector, percentile_nearest_rank
-from session_observability import SessionObservability
-from session_store import SessionStore
-from transcript_redaction import redact_text
+from tutor_agent.observability.session_config import SessionConfigError, load_session_data_config
+from tutor_agent.observability.session_export import cmd_export, cmd_summary, main as export_main
+from tutor_agent.observability.session_metrics import SessionMetricsCollector, percentile_nearest_rank
+from tutor_agent.observability.session_observability import SessionObservability
+from tutor_agent.observability.session_store import SessionStore
+from tutor_agent.safety.transcript_redaction import redact_text
 
 
 def test_percentile_deterministic() -> None:

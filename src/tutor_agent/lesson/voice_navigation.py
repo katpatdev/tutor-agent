@@ -27,6 +27,6 @@ class VoiceNavIntent:
 
 def parse_voice_navigation(text: str) -> Optional[VoiceNavIntent]:
     """Return a navigation intent for clear commands only; else None."""
-    from classroom_control import parse_navigation_intent
+    from tutor_agent.lesson.classroom_control import parse_navigation_intent
 
     return parse_navigation_intent(text)

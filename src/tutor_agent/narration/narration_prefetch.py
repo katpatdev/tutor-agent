@@ -13,12 +13,12 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence
 
-from narration_plan import (
+from tutor_agent.narration.narration_plan import (
     NarrationPlan,
     build_narration_plan,
     new_generation_id,
 )
-from slide_narration_prompt import format_slide_narration_instruction
+from tutor_agent.lesson.slide_narration_prompt import format_slide_narration_instruction
 
 logger = logging.getLogger(__name__)
 

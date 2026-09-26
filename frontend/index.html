@@ -6,12 +6,12 @@
     <title>AI Science Tutor</title>
   </head>
 
-  <body>
+  <body data-lesson-phase="welcome">
     <div class="app-shell">
       <header class="app-header" role="banner">
         <div class="brand-block">
           <h1 class="app-title">AI Science Tutor</h1>
-          <p class="app-subtitle">Interactive voice-guided lesson</p>
+          <p class="app-subtitle">A friendly, voice-guided science lesson</p>
         </div>
         <div
           class="connection-pill"
@@ -28,11 +28,21 @@
       </header>
 
       <main class="app-main">
-        <section class="progress-card" aria-label="Lesson progress">
+        <section
+          class="progress-card"
+          id="progress-card"
+          aria-label="Lesson progress"
+          data-phase="welcome"
+        >
           <div class="progress-meta">
-            <p class="progress-slide" id="lesson-slide">Slide — of 8</p>
+            <div>
+              <p class="progress-slide" id="lesson-slide">Lesson not started</p>
+              <p class="progress-current-title" id="progress-current-title">
+                Connect when you are ready
+              </p>
+            </div>
             <p class="progress-mode">
-              Mode: <span id="lesson-mode">—</span>
+              Mode: <span id="lesson-mode">Ready</span>
             </p>
           </div>
           <div
@@ -40,6 +50,7 @@
             id="slide-track"
             role="list"
             aria-label="Slide progress"
+            hidden
           ></div>
           <div
             class="progress-bar"
@@ -49,14 +60,28 @@
             aria-valuenow="0"
             id="progress-bar"
             aria-label="Lesson progress"
+            aria-hidden="true"
+            hidden
           >
             <div class="progress-fill" id="progress-fill"></div>
           </div>
         </section>
 
-        <section class="slide-stage" aria-label="Current slide">
+        <section
+          class="slide-stage"
+          id="slide-stage"
+          aria-label="Current slide"
+          data-phase="welcome"
+        >
+          <span
+            class="stage-watermark"
+            id="stage-watermark"
+            aria-hidden="true"
+          >—</span>
           <div class="stage-top">
-            <span class="stage-kicker" id="stage-slide-number">Slide —</span>
+            <span class="stage-kicker" id="stage-slide-number"
+              >Voice-guided lesson</span
+            >
             <div
               class="tutor-status"
               id="tutor-status"
@@ -67,11 +92,19 @@
               <span id="tutor-status-label">Ready</span>
             </div>
           </div>
-          <h2 class="stage-title" id="lesson-title">Connect to begin the lesson</h2>
+          <h2 class="stage-title" id="lesson-title">
+            Learn science through conversation
+          </h2>
           <p class="stage-supporting" id="narration-status">
-            Your tutor will guide you through natural disasters with voice,
-            questions, and slide navigation.
+            Meet your friendly AI tutor for a guided lesson about natural
+            disasters. Listen at your own pace, ask questions at any time, pause
+            when needed, or move between lesson topics.
           </p>
+          <ul class="welcome-expect" id="welcome-expect">
+            <li>8 guided topics</li>
+            <li>Ask questions anytime</li>
+            <li>Pause or revisit a topic</li>
+          </ul>
           <p class="stage-hint">
             Resume continues from the interrupted narration segment (not exact
             audio bytes). Browser microphone controls are separate from this app.
@@ -79,6 +112,13 @@
         </section>
 
         <section class="controls-card" aria-label="Lesson controls">
+          <h2 class="section-heading">Start your lesson</h2>
+          <p class="section-intro" id="controls-intro">
+            Connect when you are ready. During the lesson, you can pause the
+            tutor, resume from the supported narration point, or move to another
+            slide.
+          </p>
+
           <div class="controls-row session-controls">
             <button type="button" id="connect-btn" class="btn btn-primary">
               Connect
@@ -116,12 +156,23 @@
             </button>
           </div>
 
-          <div class="consent-row">
-            <label for="transcript-consent">
+          <div class="consent-block">
+            <p class="consent-heading" id="consent-heading">
+              Help improve future lessons
+            </p>
+            <label class="consent-label" for="transcript-consent">
               <input type="checkbox" id="transcript-consent" />
-              Allow this session’s redacted conversation transcript to be stored
-              locally for improving future lessons.
+              <span>
+                Allow this session’s redacted conversation transcript to be stored
+                locally. It can later be reviewed to identify frequently asked
+                questions, difficult topics, and places where lesson explanations
+                could be improved.
+              </span>
             </label>
+            <p class="hint consent-privacy" id="consent-privacy">
+              This is optional, must be selected before connecting, and does not
+              automatically retrain or change the tutor.
+            </p>
             <p id="transcript-storage-state" class="hint" aria-live="polite">
               Transcript storage: OFF
             </p>
@@ -138,10 +189,17 @@
         </section>
 
         <section class="knowledge-card" aria-label="Classroom knowledge">
-          <h2>Classroom knowledge</h2>
-          <p class="hint">
-            Upload .txt, .md, or text-based .pdf notes. Knowledge is stored in
-            server memory only until the backend restarts.
+          <h2 class="section-heading">Add your classroom notes</h2>
+          <p class="section-kicker">Classroom Knowledge</p>
+          <p class="section-intro">
+            Upload your notes, lesson material, or reference document. When a
+            question matches the uploaded material, the tutor can use relevant
+            sections to provide a more grounded answer.
+          </p>
+          <p class="hint" id="knowledge-storage-note">
+            Accepted formats: TXT, Markdown, and text-based PDF. Files are stored
+            in server memory for the current backend session and are cleared when
+            the backend restarts.
           </p>
           <div class="knowledge-controls">
             <input
@@ -161,15 +219,23 @@
             role="alert"
             aria-live="assertive"
           ></p>
-          <p>
-            <strong>Sources used for latest answer:</strong>
-            <span id="knowledge-sources" aria-live="polite">—</span>
-          </p>
         </section>
 
-        <section class="conversation-card" aria-label="Live Conversation">
+        <section
+          class="conversation-card"
+          id="conversation-card"
+          aria-label="Live Conversation"
+          data-voice="idle"
+        >
           <div class="conversation-header">
-            <h2>Live Conversation</h2>
+            <div class="conversation-heading">
+              <h2>Live Conversation</h2>
+              <p
+                class="conversation-voice-hint"
+                id="conversation-voice-hint"
+                aria-live="polite"
+              ></p>
+            </div>
             <button
               type="button"
               id="jump-latest-btn"
@@ -179,10 +245,19 @@
               Jump to latest
             </button>
           </div>
-          <p class="hint conversation-note">
-            Tutor and student speech for this session. Prefetched narration appears
-            only when it is presented aloud.
-          </p>
+          <div
+            id="conversation-empty"
+            class="conversation-empty"
+          >
+            <p class="conversation-empty-lead">
+              Your conversation with the tutor will appear here after the lesson
+              begins.
+            </p>
+            <p class="hint">
+              Tutor narration appears when it is presented aloud, and your final
+              spoken questions appear as student messages.
+            </p>
+          </div>
           <div
             id="conversation-log"
             class="conversation-log"
@@ -192,30 +267,45 @@
           ></div>
         </section>
 
-        <section class="activity-card" aria-label="Technical Logs">
-          <div class="activity-header">
-            <h2>Technical Logs</h2>
-            <button
-              type="button"
-              id="clear-activity-btn"
-              class="btn btn-ghost"
-              aria-label="Clear technical logs"
-            >
-              Clear view
-            </button>
-          </div>
-          <p class="hint activity-note">
-            Connection, lesson state, commands, and diagnostics. Classroom speech
-            belongs in Live Conversation above.
-          </p>
-          <div
-            id="debug-log"
-            class="activity-log"
-            role="log"
-            aria-live="polite"
-            aria-relevant="additions"
-          ></div>
+        <section
+          class="sources-card"
+          id="sources-card"
+          aria-label="Sources used"
+          hidden
+        >
+          <h2>Sources used</h2>
+          <ul id="knowledge-sources" class="sources-list"></ul>
         </section>
+
+        <details class="activity-card tech-logs" aria-label="Technical Logs">
+          <summary class="tech-logs-summary">
+            <span class="tech-logs-title">Technical Logs</span>
+            <span class="tech-logs-hint">Connection, state, and diagnostics</span>
+          </summary>
+          <div class="tech-logs-body">
+            <div class="activity-header">
+              <button
+                type="button"
+                id="clear-activity-btn"
+                class="btn btn-ghost"
+                aria-label="Clear technical logs"
+              >
+                Clear view
+              </button>
+            </div>
+            <p class="hint activity-note">
+              Connection events, lesson state, commands, and diagnostics appear
+              here. Tutor and student speech remains in Live Conversation.
+            </p>
+            <div
+              id="debug-log"
+              class="activity-log"
+              role="log"
+              aria-live="polite"
+              aria-relevant="additions"
+            ></div>
+          </div>
+        </details>
       </main>
 
       <footer class="app-footer">

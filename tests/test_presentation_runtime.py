@@ -8,14 +8,14 @@ from pathlib import Path
 
 import pytest
 
-from lesson_controller import (
+from tutor_agent.lesson.lesson_controller import (
     InvalidLessonTransition,
     LessonController,
     LessonMode,
     NarrationCursor,
 )
-from classroom_control import parse_classroom_control
-from presentation_runtime import (
+from tutor_agent.lesson.classroom_control import parse_classroom_control
+from tutor_agent.audio.presentation_runtime import (
     OutputPurpose,
     PresentationRuntime,
     RecordingFrameSink,
@@ -23,7 +23,7 @@ from presentation_runtime import (
     make_test_transform_frame,
     make_test_interruption_frame,
 )
-from slide_narration_prompt import is_slide_narration_instruction
+from tutor_agent.lesson.slide_narration_prompt import is_slide_narration_instruction
 
 SLIDES = [f"SLIDE {i} CONTENT" for i in range(8)]
 
@@ -88,7 +88,7 @@ async def narrate_current_slide(
 
 async def advance_from_checkpoint(runtime: PresentationRuntime) -> None:
     """At a slide checkpoint, continue to the next slide and drain transition."""
-    from classroom_control import parse_classroom_control
+    from tutor_agent.lesson.classroom_control import parse_classroom_control
 
     assert runtime.in_slide_checkpoint or (
         runtime.narration_plan is not None and runtime.narration_plan.is_complete
@@ -354,7 +354,9 @@ def test_17_disconnect_ends_controller_session_once() -> None:
 
 
 def test_18_no_live_openai_client_in_runtime_module() -> None:
-    source = Path(__file__).resolve().parents[1] / "presentation_runtime.py"
+    import tutor_agent.audio.presentation_runtime as presentation_runtime
+
+    source = Path(presentation_runtime.__file__).resolve()
     tree = ast.parse(source.read_text(encoding="utf-8"))
     imported: set[str] = set()
     for node in ast.walk(tree):
@@ -368,15 +370,16 @@ def test_18_no_live_openai_client_in_runtime_module() -> None:
 
 
 def test_19_retired_silence_timer_cannot_advance_slides() -> None:
-    root = Path(__file__).resolve().parents[1]
-    agent_source = (root / "agent.py").read_text(encoding="utf-8")
-    runtime_source = (root / "presentation_runtime.py").read_text(encoding="utf-8")
+    import tutor_agent.agent as agent_module
+    import tutor_agent.audio.presentation_runtime as presentation_runtime
+
+    agent_source = Path(agent_module.__file__).read_text(encoding="utf-8")
+    runtime_source = Path(presentation_runtime.__file__).read_text(encoding="utf-8")
     for text in (agent_source, runtime_source):
         assert "PresentationObserver0" not in text
         assert "SILENCE_THRESHOLD" not in text
         assert "call_later" not in text
         assert "Say goodbye and end the presentation" not in text
-    import agent as agent_module
 
     assert not hasattr(agent_module, "PresentationObserver0")
 

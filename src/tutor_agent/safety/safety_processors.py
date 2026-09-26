@@ -21,9 +21,9 @@ from pipecat.frames.frames import (
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
-from moderation_service import ModerationClient, SafetyConfig
-from presentation_runtime import OutputPurpose, PresentationRuntime
-from safety_policy import (
+from tutor_agent.safety.moderation_service import ModerationClient, SafetyConfig
+from tutor_agent.audio.presentation_runtime import OutputPurpose, PresentationRuntime
+from tutor_agent.safety.safety_policy import (
     SafetyDecision,
     SafetySource,
     decision_from_failure,
@@ -33,7 +33,7 @@ from safety_policy import (
     oversized_decision,
     template_text,
 )
-from speech_chunking import pack_spoken_units
+from tutor_agent.narration.speech_chunking import pack_spoken_units
 
 
 def _decision_label(decision: SafetyDecision) -> str:

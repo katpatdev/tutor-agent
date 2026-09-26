@@ -11,14 +11,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from curriculum_recommendations import recommendations_from_signals, recommendations_to_dicts
-from friction_analyzer import (
+from tutor_agent.evaluation.curriculum_recommendations import recommendations_from_signals, recommendations_to_dicts
+from tutor_agent.evaluation.friction_analyzer import (
     DEFAULT_JACCARD_THRESHOLD,
     build_friction_report,
     report_contains_transcript_text,
 )
-from session_config import load_session_data_config
-from session_store import SessionStore, SessionStoreError
+from tutor_agent.observability.session_config import load_session_data_config
+from tutor_agent.observability.session_store import SessionStore, SessionStoreError
 
 
 class FlywheelError(Exception):
@@ -132,7 +132,7 @@ def analyze(
             raise FlywheelError("Session database unavailable") from exc
 
     # Collect signals for recommendations
-    from friction_analyzer import analyze_session
+    from tutor_agent.evaluation.friction_analyzer import analyze_session
 
     all_signals = []
     for s in sessions:

@@ -11,9 +11,9 @@ import pytest
 from pypdf import PdfWriter
 from pypdf.generic import DictionaryObject, NameObject, StreamObject
 
-from curriculum import SLIDES
-from embedding_service import FakeEmbeddingClient, RagConfig, load_rag_config
-from knowledge_ingestion import (
+from tutor_agent.lesson.curriculum import SLIDES
+from tutor_agent.knowledge.embedding_service import FakeEmbeddingClient, RagConfig, load_rag_config
+from tutor_agent.knowledge.knowledge_ingestion import (
     RAG_CONTEXT_MARKER,
     IngestionError,
     ParsedDocument,
@@ -25,10 +25,10 @@ from knowledge_ingestion import (
     sha256_text,
     strip_rag_messages,
 )
-from knowledge_store import InMemoryKnowledgeStore, VectorStoreError, cosine_similarity
-from lesson_controller import LessonMode
-from moderation_service import FakeModerationClient, flagged_result
-from presentation_runtime import (
+from tutor_agent.knowledge.knowledge_store import InMemoryKnowledgeStore, VectorStoreError, cosine_similarity
+from tutor_agent.lesson.lesson_controller import LessonMode
+from tutor_agent.safety.moderation_service import FakeModerationClient, flagged_result
+from tutor_agent.audio.presentation_runtime import (
     OutputPurpose,
     PresentationRuntime,
     RecordingFrameSink,
@@ -36,8 +36,8 @@ from presentation_runtime import (
     make_test_transform_frame,
     make_test_interruption_frame,
 )
-from retrieval_processor import RetrievalProcessor, SessionRetrievalState
-from safety_policy import SafetyStatus
+from tutor_agent.knowledge.retrieval_processor import RetrievalProcessor, SessionRetrievalState
+from tutor_agent.safety.safety_policy import SafetyStatus
 
 
 PROMPTS = [s.prompt for s in SLIDES]
@@ -577,8 +577,8 @@ def test_sessions_share_store_isolate_retrieval_state() -> None:
 def test_http_knowledge_endpoints_with_fakes() -> None:
     from fastapi.testclient import TestClient
 
-    from embedding_service import load_rag_config
-    from main import app
+    from tutor_agent.knowledge.embedding_service import load_rag_config
+    from tutor_agent.main import app
 
     store = InMemoryKnowledgeStore()
     cfg = load_rag_config({})

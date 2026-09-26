@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from lesson_controller import (
+from tutor_agent.lesson.lesson_controller import (
     InvalidLessonTransition,
     LessonController,
     LessonEffect,
@@ -304,7 +304,9 @@ def test_20_lesson_controller_has_no_pipecat_or_openai_imports() -> None:
     import ast
     from pathlib import Path
 
-    source = Path(__file__).resolve().parents[1] / "lesson_controller.py"
+    import tutor_agent.lesson.lesson_controller as lesson_controller
+
+    source = Path(lesson_controller.__file__).resolve()
     tree = ast.parse(source.read_text(encoding="utf-8"))
     imported_roots: set[str] = set()
     for node in ast.walk(tree):

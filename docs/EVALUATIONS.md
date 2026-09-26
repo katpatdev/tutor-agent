@@ -19,10 +19,11 @@ Judge outputs must be structured; malformed output cannot pass.
 ## Pairwise harness
 
 ```bash
-uv run python -m eval_harness validate
-uv run python -m eval_harness run-offline-fixtures
+uv run python -m tutor_agent.evaluation.eval_harness validate
+uv run python -m tutor_agent.evaluation.eval_harness run-offline-fixtures
 # Live (gated; not used in automated tests):
-uv run python -m eval_harness run-live --candidate data/prompt_candidates/... --live-openai --confirm-cost
+uv run python -m tutor_agent.evaluation.eval_harness run-live --candidate data/prompt_candidates/... --live-openai --confirm-cost
+# equivalent: uv run tutor-eval ...
 ```
 
 Baseline vs candidate answers are labeled Answer A / Answer B with deterministic per-case order randomization. Repeated judging is configurable via `EVAL_REPETITIONS`.

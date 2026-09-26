@@ -9,8 +9,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-from session_config import load_session_data_config
-from session_store import SessionStore
+from tutor_agent.observability.session_config import load_session_data_config
+from tutor_agent.observability.session_store import SessionStore
 
 
 def _restrictive_chmod(path: Path) -> None:

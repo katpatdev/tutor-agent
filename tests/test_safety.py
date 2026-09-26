@@ -7,17 +7,17 @@ from typing import Any, List
 
 import pytest
 
-from curriculum import SLIDES
-from lesson_controller import InvalidLessonTransition, LessonMode
-from lesson_protocol import LessonProtocolSession, build_state_message, control_availability
-from moderation_service import (
+from tutor_agent.lesson.curriculum import SLIDES
+from tutor_agent.lesson.lesson_controller import InvalidLessonTransition, LessonMode
+from tutor_agent.lesson.lesson_protocol import LessonProtocolSession, build_state_message, control_availability
+from tutor_agent.safety.moderation_service import (
     FakeModerationClient,
     ModerationResult,
     SafetyConfig,
     flagged_result,
     load_safety_config,
 )
-from presentation_runtime import (
+from tutor_agent.audio.presentation_runtime import (
     OutputPurpose,
     PresentationRuntime,
     RecordingFrameSink,
@@ -25,7 +25,7 @@ from presentation_runtime import (
     make_test_transform_frame,
     make_test_interruption_frame,
 )
-from safety_policy import (
+from tutor_agent.safety.safety_policy import (
     SafetyDecision,
     SafetySource,
     SafetyStatus,
@@ -33,7 +33,7 @@ from safety_policy import (
     local_distress_or_danger,
     make_safety_event,
 )
-from safety_processors import InputSafetyProcessor, OutputSafetyProcessor
+from tutor_agent.safety.safety_processors import InputSafetyProcessor, OutputSafetyProcessor
 
 
 PROMPTS = [s.prompt for s in SLIDES]

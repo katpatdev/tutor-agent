@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
-from voice_navigation import VoiceNavAction, VoiceNavIntent
+from tutor_agent.lesson.voice_navigation import VoiceNavAction, VoiceNavIntent
 
 
 class ClassroomControlKind(str, Enum):

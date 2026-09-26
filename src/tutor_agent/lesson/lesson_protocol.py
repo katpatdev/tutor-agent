@@ -13,9 +13,9 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Dict, Mapping, Optional, Set
 
-from curriculum import TOTAL_SLIDES, slide_title
-from lesson_controller import InvalidLessonTransition, LessonMode, LessonState
-from presentation_runtime import PresentationRuntime
+from tutor_agent.lesson.curriculum import TOTAL_SLIDES, slide_title
+from tutor_agent.lesson.lesson_controller import InvalidLessonTransition, LessonMode, LessonState
+from tutor_agent.audio.presentation_runtime import PresentationRuntime
 
 PROTOCOL_VERSION = 1
 MSG_COMMAND = "lesson.command"

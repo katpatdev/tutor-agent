@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from curriculum import slide_title
+from tutor_agent.lesson.curriculum import slide_title
 
 
 def topic_for_slide(slide_0based: int) -> str:

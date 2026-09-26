@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import List, Optional
 
-from moderation_service import (
+from tutor_agent.safety.moderation_service import (
     ModerationResult,
     ModerationTimeout,
     ModerationUnavailable,

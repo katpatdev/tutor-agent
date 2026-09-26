@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
-from prompt_registry import load_active_tutor_prompt, sha256_text
+from tutor_agent.evaluation.prompt_registry import load_active_tutor_prompt, sha256_text
 
 
 class PromptWorkflowError(Exception):
@@ -141,7 +141,7 @@ def build_candidate_offline(
         for slide in (friction_report.get("friction_by_slide") or {}).values():
             signal_codes.extend(slide.get("signal_reason_codes") or [])
         # Ensure we didn't pull transcript fields
-        from friction_analyzer import report_contains_transcript_text
+        from tutor_agent.evaluation.friction_analyzer import report_contains_transcript_text
 
         if report_contains_transcript_text(friction_report):
             raise PromptWorkflowError("Friction report must not contain transcript text")
@@ -236,7 +236,7 @@ def build_optimizer_request_messages(
     friction_report: Mapping[str, Any],
 ) -> List[Dict[str, str]]:
     """Build OpenAI messages for candidate generation WITHOUT any transcript text."""
-    from friction_analyzer import report_contains_transcript_text
+    from tutor_agent.evaluation.friction_analyzer import report_contains_transcript_text
 
     if report_contains_transcript_text(friction_report):
         raise PromptWorkflowError("Refusing to build OpenAI request: report contains transcript text")

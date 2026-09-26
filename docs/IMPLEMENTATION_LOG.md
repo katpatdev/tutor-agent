@@ -1299,3 +1299,154 @@ Date: 2026-09-26
 - Conversation snapshot on reconnect after long sessions (bounded to 1000)
 - Live OpenAI latency for answers still independent of mirror
 
+---
+
+## Iteration 11.2 — Frontend-only visual refinement
+
+Date: 2026-09-26
+
+### Baseline
+
+- Pushed Iteration 11.1: `178c27d` on `katpatdev/main` (stable rollback)
+- Frontend-only aesthetic pass; no backend file changes
+
+### Changes
+
+- Hide empty Sources section; show compact `Sources used` only when retrieval returns items
+- Tutor/Student avatars (inline SVG), grouped consecutive Tutor bubbles, speaking/listening cues from existing mode
+- Stronger slide stage (watermark, teal accent border), polished progress steps
+- Collapsible Technical Logs (`<details>`, collapsed by default)
+- Palette and responsive refinements; Jump to latest retained
+
+### Offline validation
+
+- Frontend: 39 passed; tsc OK; vite build OK
+- Backend regression: 359 passed (unchanged)
+- Eval validate / fixtures OK
+- No commit / push / packaging for 11.2
+
+---
+
+## Iteration 11.2.1 — Pause/resume conversation entry deduplication
+
+Date: 2026-09-26
+
+### Baseline
+
+- Stable: `178c27d` (local 11.2 frontend visual WIP retained)
+
+### Root cause
+
+- Pause/Resume requeued the same narration segment as a new `OwnedSpeechUnit` whose `logical_id` defaulted to a new `unit_id`, so `ConversationLedger` created a second tutor entry.
+
+### Fix
+
+- Semantic narration conversation id `narration:{generation_id}:{segment_index}` reused across pause/resume and TTS retries
+- Physical `unit_id` still rotates for watchdogs
+- Explicit Repeat uses `…:repeat:{uuid}` and `source=repeat`
+
+### Validation
+
+- New `tests/test_conversation_pause_resume.py`; frontend ConversationTracker idempotency tests
+- Full suites run before restart; no commit until live approval
+
+
+---
+
+## Iteration 11.3 — Professional repository and package structure
+
+- Date: 2026-09-26
+- Objective: Structural refactor only — move flat root Python modules into `src/tutor_agent/` domain packages without changing tutor behavior.
+- Starting commit: `178c27ddf54d4ee33644430ff2d2fd04eb71a0da` (`main`)
+- Starting Git status: uncommitted Iteration 11.2 frontend visual WIP + 11.2.1 pause/resume transcript fix (`presentation_runtime.py`, `presentation_tts_delivery.py`, `tests/test_conversation_pause_resume.py`, `docs/IMPLEMENTATION_LOG.md`); preserved via `git mv` / continued edits (no stash/reset).
+
+### Before
+
+- ~40 backend modules lived at repository root; `pyproject.toml` named package `agent` with no `src` discovery.
+- Baseline offline: pytest **372** passed; frontend Vitest **42** passed.
+- Pause/resume semantic conversation-id fix present in working tree.
+
+### Changes made
+
+- Created `src/tutor_agent/` with packages: `lesson/`, `narration/`, `audio/`, `safety/`, `knowledge/`, `observability/`, `evaluation/`.
+- `git mv` root modules into packages; added minimal `__init__.py` files and `paths.py` for repo-root resource resolution (`prompts/`, `evals/`, `data/`).
+- Root `main.py` is a compatibility launcher only (`tutor_agent.main.run`).
+- Absolute imports: `from tutor_agent.<package>.<module> import …`.
+- `pyproject.toml`: project name `tutor-agent`, setuptools `where = ["src"]`, console scripts `tutor-agent`, `tutor-session-export`, `tutor-eval`, `tutor-flywheel`, `tutor-prompt-workflow`.
+- Updated tests/scripts/docs; added `docs/PROJECT_STRUCTURE.md`.
+- Historical implementation-log paths left unchanged.
+
+### Deviations from proposed tree
+
+- Added `src/tutor_agent/paths.py` (not in the original sketch) as the single resource-path helper.
+- Used setuptools package discovery (`where = ["src"]`) instead of hatchling-only config for predictable editable installs.
+
+### Dependency changes
+
+- Packaging metadata only (`name`, build-system, scripts). No runtime dependency upgrades.
+
+### Validation results
+
+- Import smoke: all packages OK; prompts/evals resolve from repo root even when cwd=/tmp
+- `compileall` src/tests/scripts/main.py: OK
+- pytest: **372 passed** (matches baseline)
+- eval_harness validate: 21 cases OK; run-offline-fixtures: 13 OK
+- session_export / flywheel / prompt_workflow `--help`: OK
+- live_test_preflight: PASS (ports free)
+- scan_submission: PASS on scripts/prompts/evals/docs/src (workspace `.` fails expectedly due to local `.venv`/`node_modules`/`.env`)
+- frontend Vitest **42**; `tsc --noEmit` OK; `vite build` OK
+- Smoke: `uv run python main.py` and `uv run python -m tutor_agent.main` — `/health/live`, `/health/ready`, `/connect`, `/knowledge/status` OK
+- Frontend http://127.0.0.1:5173 → 200 with backend connect OK
+- Manual voice session: deferred to human approval (not run by agent)
+
+### Result after iteration
+
+- Structural migration complete; behavior intentionally unchanged. **No commit/push until human approval.**
+
+### Next recommended step
+
+- Manual voice session (Pause/Resume/interrupt/answer/nav) then approve commit.
+
+---
+
+## Iteration 11.4 — Professional welcome screen and UI copy refinement
+
+- Date: 2026-09-26
+- Objective: Frontend-only welcome/copy/empty-state polish; keep teal palette; no backend behavior changes.
+- Starting commit: `178c27ddf54d4ee33644430ff2d2fd04eb71a0da` (uncommitted 11.2 / 11.2.1 / 11.3 preserved)
+
+### Before
+
+- Disconnected UI showed progress chrome and weak “Connect to begin” stage copy.
+- Consent / knowledge / conversation empty states were terse.
+- Baseline: Vitest 42; pytest 372.
+
+### Changes made
+
+- Welcome stage heading, supporting copy, and “What to expect” pills
+- Display phases: welcome → preparing (`Slide 0 of 8`) → active; IDLE gated to preparing chrome
+- Controls intro, consent wording, Classroom Knowledge copy, conversation empty state, clearer Technical Logs note
+- CSS spacing / hierarchy under existing teal palette
+- Expanded `uiLayout.test.ts` (11.4 cases)
+
+### Validation results
+
+- Vitest **51** passed; `tsc --noEmit` OK; `vite build` OK
+- pytest **372** passed; eval validate / offline fixtures OK
+- No commit until manual UI approval
+
+### Next recommended step
+
+- Manual review checklist in Iteration 11.4 prompt, then approve commit scope.
+
+---
+
+## Docs — Submission README with HLD/LLD diagrams
+
+- Date: 2026-09-26
+- Objective: Replace the starter-oriented README with an upload-ready design document covering HLD, LLD, Mermaid architecture diagrams, protocol, and ops, matching the current `src/tutor_agent` layout.
+- Scope: `README.md` only (plus this log note). No runtime behavior changes.
+
+### Result
+
+- README now includes system context, logical architecture, pipeline LLD, lesson state machine, control/narration/safety/RAG/flywheel sequences, frontend display phases, setup, testing, and doc index.

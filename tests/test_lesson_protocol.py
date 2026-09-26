@@ -7,9 +7,9 @@ from typing import Any, Dict, List
 
 import pytest
 
-from curriculum import SLIDES, TOTAL_SLIDES, validate_curriculum
-from lesson_controller import LessonMode
-from lesson_protocol import (
+from tutor_agent.lesson.curriculum import SLIDES, TOTAL_SLIDES, validate_curriculum
+from tutor_agent.lesson.lesson_controller import LessonMode
+from tutor_agent.lesson.lesson_protocol import (
     FORBIDDEN_OUTBOUND_KEYS,
     PROTOCOL_VERSION,
     REQUEST_ID_HISTORY_LIMIT,
@@ -23,7 +23,7 @@ from lesson_protocol import (
     parse_command_envelope,
     wrap_rtvi_server_message,
 )
-from presentation_runtime import (
+from tutor_agent.audio.presentation_runtime import (
     PresentationRuntime,
     RecordingFrameSink,
     make_test_append_frame,

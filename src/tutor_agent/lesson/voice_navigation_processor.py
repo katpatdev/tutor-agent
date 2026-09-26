@@ -12,7 +12,7 @@ from typing import Any
 from pipecat.frames.frames import Frame, TranscriptionFrame
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
-from classroom_control import ClassroomControlKind, parse_classroom_control
+from tutor_agent.lesson.classroom_control import ClassroomControlKind, parse_classroom_control
 
 
 class VoiceNavigationProcessor(FrameProcessor):

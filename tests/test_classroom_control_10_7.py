@@ -7,14 +7,14 @@ from typing import List, Optional
 
 import pytest
 
-from classroom_control import (
+from tutor_agent.lesson.classroom_control import (
     ClassroomControlKind,
     parse_classroom_control,
     parse_navigation_intent,
 )
-from lesson_controller import LessonMode
-from narration_prefetch import NarrationPrefetchCache, PrefetchState
-from presentation_runtime import (
+from tutor_agent.lesson.lesson_controller import LessonMode
+from tutor_agent.narration.narration_prefetch import NarrationPrefetchCache, PrefetchState
+from tutor_agent.audio.presentation_runtime import (
     CHECKPOINT_REMINDER_TEXT,
     POST_ANSWER_INVITE_CHECKPOINT,
     OutputPurpose,
@@ -227,7 +227,7 @@ def test_continue_after_mid_slide_question_resumes() -> None:
         await runtime.on_bot_started_speaking()
         await runtime.on_bot_stopped_speaking()
         assert runtime.output_purpose is OutputPurpose.POST_ANSWER_INVITE
-        from classroom_copy import mid_slide_followup
+        from tutor_agent.lesson.classroom_copy import mid_slide_followup
 
         assert mid_slide_followup(runtime.state.cursor.slide_index) in sink.tts_texts
         await runtime.on_bot_started_speaking()

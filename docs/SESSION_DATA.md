@@ -98,9 +98,10 @@ characters, and `narration_resume_accuracy`. They contain no narration text.
 ## Export CLI (local only)
 
 ```bash
-uv run python -m session_export summary
-uv run python -m session_export export --output exported_sessions.jsonl
-uv run python -m session_export export --include-redacted-transcripts --overwrite --output exported_sessions.jsonl
+uv run python -m tutor_agent.observability.session_export summary
+uv run python -m tutor_agent.observability.session_export export --output exported_sessions.jsonl
+uv run python -m tutor_agent.observability.session_export export --include-redacted-transcripts --overwrite --output exported_sessions.jsonl
+# equivalent: uv run tutor-session-export ...
 ```
 
 Not an HTTP API. Default export excludes transcript text. Atomic write + overwrite guard.

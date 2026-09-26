@@ -42,6 +42,18 @@ import {
 const BOT_API_URL =
   import.meta.env.VITE_BOT_API_URL || 'http://localhost:7860';
 
+const WELCOME_TITLE = 'Learn science through conversation';
+const WELCOME_SUPPORTING =
+  'Meet your friendly AI tutor for a guided lesson about natural disasters. Listen at your own pace, ask questions at any time, pause when needed, or move between lesson topics.';
+const WELCOME_PROGRESS_TITLE = 'Connect when you are ready';
+const PREPARING_MESSAGE = 'Preparing your lesson…';
+const CONTROLS_INTRO_DISCONNECTED =
+  'Connect when you are ready. During the lesson, you can pause the tutor, resume from the supported narration point, or move to another slide.';
+const CONTROLS_INTRO_CONNECTED =
+  'Use Pause, Resume, or Go to Slide while the lesson is connected.';
+
+type LessonDisplayPhase = 'welcome' | 'preparing' | 'active';
+
 class WebsocketClientApp {
   private pcClient: PipecatClient | null = null;
   private connectBtn: HTMLButtonElement | null = null;
@@ -64,6 +76,11 @@ class WebsocketClientApp {
   private knowledgeErrorEl: HTMLElement | null = null;
   private knowledgeCountsEl: HTMLElement | null = null;
   private knowledgeSourcesEl: HTMLElement | null = null;
+  private sourcesCard: HTMLElement | null = null;
+  private conversationCard: HTMLElement | null = null;
+  private conversationVoiceHint: HTMLElement | null = null;
+  private progressCurrentTitle: HTMLElement | null = null;
+  private stageWatermark: HTMLElement | null = null;
   private transcriptConsent: HTMLInputElement | null = null;
   private transcriptStatusEl: HTMLElement | null = null;
   private transcriptStorageStateEl: HTMLElement | null = null;
@@ -74,9 +91,15 @@ class WebsocketClientApp {
   private slideTrack: HTMLElement | null = null;
   private progressBar: HTMLElement | null = null;
   private progressFill: HTMLElement | null = null;
+  private progressCard: HTMLElement | null = null;
+  private slideStage: HTMLElement | null = null;
+  private welcomeExpect: HTMLElement | null = null;
+  private conversationEmpty: HTMLElement | null = null;
+  private controlsIntro: HTMLElement | null = null;
   private clearActivityBtn: HTMLButtonElement | null = null;
   private conversationLog: HTMLElement | null = null;
   private jumpLatestBtn: HTMLButtonElement | null = null;
+  private lessonDisplayPhase: LessonDisplayPhase = 'welcome';
   private botAudio: HTMLAudioElement;
   private stateTracker = new LessonStateTracker();
   private conversationTracker = new ConversationTracker();
@@ -102,7 +125,7 @@ class WebsocketClientApp {
 
     this.setupDOMElements();
     this.setupEventListeners();
-    this.renderSlideTrack(0);
+    this.showWelcomeDisplay();
     this.applyControlAvailability(null);
     void this.refreshKnowledgeStatus();
   }
@@ -136,6 +159,15 @@ class WebsocketClientApp {
     this.knowledgeErrorEl = document.getElementById('knowledge-upload-error');
     this.knowledgeCountsEl = document.getElementById('knowledge-counts');
     this.knowledgeSourcesEl = document.getElementById('knowledge-sources');
+    this.sourcesCard = document.getElementById('sources-card');
+    this.conversationCard = document.getElementById('conversation-card');
+    this.conversationVoiceHint = document.getElementById(
+      'conversation-voice-hint'
+    );
+    this.progressCurrentTitle = document.getElementById(
+      'progress-current-title'
+    );
+    this.stageWatermark = document.getElementById('stage-watermark');
     this.transcriptConsent = document.getElementById(
       'transcript-consent'
     ) as HTMLInputElement;
@@ -150,6 +182,11 @@ class WebsocketClientApp {
     this.slideTrack = document.getElementById('slide-track');
     this.progressBar = document.getElementById('progress-bar');
     this.progressFill = document.getElementById('progress-fill');
+    this.progressCard = document.getElementById('progress-card');
+    this.slideStage = document.getElementById('slide-stage');
+    this.welcomeExpect = document.getElementById('welcome-expect');
+    this.conversationEmpty = document.getElementById('conversation-empty');
+    this.controlsIntro = document.getElementById('controls-intro');
     this.clearActivityBtn = document.getElementById(
       'clear-activity-btn'
     ) as HTMLButtonElement;
@@ -285,36 +322,179 @@ class WebsocketClientApp {
     const el = this.conversationLog;
     if (!el) return;
     el.replaceChildren();
-    for (const entry of this.conversationTracker.list) {
-      el.appendChild(this.buildConversationRow(entry));
+    const entries = this.conversationTracker.list;
+    for (let i = 0; i < entries.length; i += 1) {
+      const entry = entries[i];
+      const prev = i > 0 ? entries[i - 1] : null;
+      const grouped =
+        prev != null &&
+        prev.role === entry.role &&
+        entry.role === 'assistant' &&
+        prev.slide_number === entry.slide_number;
+      el.appendChild(this.buildConversationRow(entry, { grouped }));
+    }
+    if (this.conversationEmpty) {
+      this.conversationEmpty.hidden = entries.length > 0;
     }
     if (this.followConversationLive) {
       this.scrollConversationToLatest();
     }
   }
 
-  private buildConversationRow(entry: ConversationEntry): HTMLElement {
+  private setLessonDisplayPhase(phase: LessonDisplayPhase): void {
+    this.lessonDisplayPhase = phase;
+    document.body.dataset.lessonPhase = phase;
+    if (this.progressCard) {
+      this.progressCard.dataset.phase = phase;
+    }
+    if (this.slideStage) {
+      this.slideStage.dataset.phase = phase;
+    }
+    if (this.welcomeExpect) {
+      this.welcomeExpect.hidden = phase !== 'welcome';
+    }
+  }
+
+  private setProgressChromeVisible(visible: boolean): void {
+    if (this.slideTrack) {
+      this.slideTrack.hidden = !visible;
+      this.slideTrack.setAttribute('aria-hidden', visible ? 'false' : 'true');
+      if (!visible) {
+        this.slideTrack.replaceChildren();
+      }
+    }
+    if (this.progressBar) {
+      this.progressBar.hidden = !visible;
+      this.progressBar.setAttribute('aria-hidden', visible ? 'false' : 'true');
+      if (!visible) {
+        this.progressBar.setAttribute('aria-valuenow', '0');
+      }
+    }
+  }
+
+  private showWelcomeDisplay(): void {
+    this.setLessonDisplayPhase('welcome');
+    this.setProgressChromeVisible(false);
+    if (this.progressFill) {
+      this.progressFill.style.width = '0%';
+    }
+    if (this.slideSpan) {
+      this.slideSpan.textContent = 'Lesson not started';
+    }
+    if (this.progressCurrentTitle) {
+      this.progressCurrentTitle.textContent = WELCOME_PROGRESS_TITLE;
+    }
+    if (this.modeSpan) {
+      this.modeSpan.textContent = 'Ready';
+    }
+    if (this.titleSpan) {
+      this.titleSpan.textContent = WELCOME_TITLE;
+    }
+    if (this.narrationStatusEl) {
+      this.narrationStatusEl.textContent = WELCOME_SUPPORTING;
+    }
+    if (this.stageSlideNumber) {
+      this.stageSlideNumber.textContent = 'Voice-guided lesson';
+    }
+    if (this.stageWatermark) {
+      this.stageWatermark.textContent = '—';
+    }
+    if (this.controlsIntro) {
+      this.controlsIntro.textContent = CONTROLS_INTRO_DISCONNECTED;
+    }
+    this.setTutorStatusFromMode(null);
+  }
+
+  private showPreparingDisplay(): void {
+    this.setLessonDisplayPhase('preparing');
+    this.setProgressChromeVisible(true);
+    this.updateProgress(0, this.slideTotal);
+    if (this.slideSpan) {
+      this.slideSpan.textContent = `Slide 0 of ${this.slideTotal}`;
+    }
+    if (this.progressCurrentTitle) {
+      this.progressCurrentTitle.textContent = PREPARING_MESSAGE;
+    }
+    if (this.modeSpan) {
+      this.modeSpan.textContent = 'Ready';
+    }
+    if (this.titleSpan) {
+      this.titleSpan.textContent = PREPARING_MESSAGE;
+    }
+    if (this.narrationStatusEl) {
+      this.narrationStatusEl.textContent =
+        'Connecting to your tutor and preparing the first topic.';
+    }
+    if (this.stageSlideNumber) {
+      this.stageSlideNumber.textContent = 'Getting ready';
+    }
+    if (this.stageWatermark) {
+      this.stageWatermark.textContent = '0';
+    }
+    if (this.controlsIntro) {
+      this.controlsIntro.textContent = CONTROLS_INTRO_CONNECTED;
+    }
+    this.setTutorStatusFromMode('IDLE');
+  }
+
+  private createAvatar(kind: 'tutor' | 'you'): HTMLElement {
+    const avatar = document.createElement('div');
+    avatar.className = `conv-avatar conv-avatar-${kind}`;
+    avatar.setAttribute('aria-hidden', 'true');
+    avatar.innerHTML =
+      kind === 'tutor'
+        ? `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2 8l10 5 10-5-10-5Z"/><path d="M6 10.5V16c0 1.5 2.7 3 6 3s6-1.5 6-3v-5.5"/><path d="M22 8v7"/></svg>`
+        : `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.5"/><path d="M5 19.5c1.8-3.2 4.2-4.8 7-4.8s5.2 1.6 7 4.8"/></svg>`;
+    return avatar;
+  }
+
+  private buildConversationRow(
+    entry: ConversationEntry,
+    opts: { grouped: boolean }
+  ): HTMLElement {
     const row = document.createElement('div');
     const isUser = entry.role === 'user';
-    row.className = `conv-row ${isUser ? 'you' : 'tutor'}`;
+    row.className = `conv-row ${isUser ? 'you' : 'tutor'}${
+      opts.grouped ? ' is-grouped' : ''
+    }`;
+
+    if (!opts.grouped) {
+      row.appendChild(this.createAvatar(isUser ? 'you' : 'tutor'));
+    } else {
+      const spacer = document.createElement('div');
+      spacer.className = 'conv-avatar-spacer';
+      spacer.setAttribute('aria-hidden', 'true');
+      row.appendChild(spacer);
+    }
+
     const bubble = document.createElement('div');
     bubble.className = 'conv-bubble';
     const meta = document.createElement('div');
     meta.className = 'conv-meta';
-    const role = document.createElement('span');
-    role.className = 'conv-role';
-    role.textContent = isUser ? 'You' : 'Tutor';
-    meta.appendChild(role);
-    if (entry.slide_number != null) {
+    if (!opts.grouped) {
+      const role = document.createElement('span');
+      role.className = 'conv-role';
+      role.textContent = isUser ? 'You' : 'Tutor';
+      meta.appendChild(role);
+      if (!isUser) {
+        const speaking = document.createElement('span');
+        speaking.className = 'conv-speaking-dots';
+        speaking.setAttribute('aria-hidden', 'true');
+        speaking.innerHTML = '<i></i><i></i><i></i>';
+        meta.appendChild(speaking);
+      }
+    }
+    if (entry.slide_number != null && !opts.grouped) {
       const badge = document.createElement('span');
       badge.className = 'conv-slide-badge';
       badge.textContent =
         entry.slide_title != null && entry.slide_title.length > 0
-          ? `Slide ${entry.slide_number}: ${entry.slide_title}`
+          ? `Slide ${entry.slide_number}`
           : `Slide ${entry.slide_number}`;
       meta.appendChild(badge);
     }
     const time = document.createElement('span');
+    time.className = 'conv-time';
     time.textContent = new Date(entry.timestamp * 1000).toLocaleTimeString();
     meta.appendChild(time);
     const text = document.createElement('p');
@@ -341,7 +521,7 @@ class WebsocketClientApp {
     if (!this.tutorStatusEl || !this.tutorStatusLabel) return;
     const map: Record<string, { status: string; label: string }> = {
       IDLE: { status: 'idle', label: 'Ready' },
-      PRESENTING: { status: 'speaking', label: 'Tutor speaking' },
+      PRESENTING: { status: 'speaking', label: 'Speaking' },
       INTERRUPTED: { status: 'listening', label: 'Listening' },
       ANSWERING: { status: 'answering', label: 'Answering' },
       PAUSED: { status: 'paused', label: 'Paused' },
@@ -351,6 +531,18 @@ class WebsocketClientApp {
     const resolved = (mode && map[mode]) || { status: 'idle', label: 'Ready' };
     this.tutorStatusEl.dataset.status = resolved.status;
     this.tutorStatusLabel.textContent = resolved.label;
+    if (this.conversationCard) {
+      this.conversationCard.dataset.voice = resolved.status;
+    }
+    if (this.conversationVoiceHint) {
+      if (resolved.status === 'speaking' || resolved.status === 'answering') {
+        this.conversationVoiceHint.textContent = 'Tutor is speaking';
+      } else if (resolved.status === 'listening' || resolved.status === 'qa') {
+        this.conversationVoiceHint.textContent = 'Listening for you';
+      } else {
+        this.conversationVoiceHint.textContent = '';
+      }
+    }
   }
 
   private renderSlideTrack(currentNumber: number): void {
@@ -385,9 +577,12 @@ class WebsocketClientApp {
       this.progressBar.setAttribute('aria-valuemax', String(safeTotal));
       this.progressBar.setAttribute('aria-valuenow', String(clamped));
     }
-    if (this.stageSlideNumber) {
+    if (this.lessonDisplayPhase === 'active' && this.stageSlideNumber) {
       this.stageSlideNumber.textContent =
-        clamped > 0 ? `Slide ${clamped}` : 'Slide —';
+        clamped > 0 ? `Slide ${clamped} of ${safeTotal}` : 'Getting ready';
+    }
+    if (this.lessonDisplayPhase === 'active' && this.stageWatermark) {
+      this.stageWatermark.textContent = clamped > 0 ? String(clamped) : '0';
     }
   }
 
@@ -420,6 +615,32 @@ class WebsocketClientApp {
   }
 
   private applyLessonState(state: LessonStateMessage): void {
+    // Display-only: IDLE keeps preparing chrome so backend slide 1 does not leak.
+    if (state.mode === 'IDLE') {
+      this.showPreparingDisplay();
+      if (this.modeSpan) {
+        this.modeSpan.textContent = humanModeLabel(state.mode);
+      }
+      if (this.slideSelect) {
+        this.slideSelect.value = String(state.slide.number);
+      }
+      if (this.safetyNotice) {
+        const safety = state.safety_notice || '';
+        const audio = state.audio_warning || '';
+        this.safetyNotice.textContent = [safety, audio].filter(Boolean).join(' ');
+        if (audio) {
+          this.log(`Audio warning: ${audio}`);
+        }
+      }
+      this.applyControlAvailability(state);
+      return;
+    }
+
+    this.setLessonDisplayPhase('active');
+    this.setProgressChromeVisible(true);
+    if (this.controlsIntro) {
+      this.controlsIntro.textContent = CONTROLS_INTRO_CONNECTED;
+    }
     if (this.modeSpan) {
       this.modeSpan.textContent = humanModeLabel(state.mode);
     }
@@ -428,6 +649,9 @@ class WebsocketClientApp {
     }
     if (this.titleSpan) {
       this.titleSpan.textContent = state.slide.title;
+    }
+    if (this.progressCurrentTitle) {
+      this.progressCurrentTitle.textContent = state.slide.title;
     }
     if (this.slideSelect) {
       this.slideSelect.value = String(state.slide.number);
@@ -443,8 +667,7 @@ class WebsocketClientApp {
     if (this.narrationStatusEl) {
       const narration = formatNarrationStatus(state.narration);
       this.narrationStatusEl.textContent =
-        narration ||
-        'Your tutor will guide you through natural disasters with voice, questions, and slide navigation.';
+        narration || WELCOME_SUPPORTING;
     }
     this.setTutorStatusFromMode(state.mode);
     this.updateProgress(state.slide.number, state.slide.total);
@@ -542,10 +765,10 @@ class WebsocketClientApp {
 
     const retrieval = parseKnowledgeRetrievalMessage(data);
     if (retrieval) {
-      this.renderKnowledgeSources(retrieval.sources, retrieval.status);
       this.log(
         `Knowledge retrieval ${retrieval.status} sources=${retrieval.sources.length}`
       );
+      this.renderKnowledgeSources(retrieval.sources, retrieval.status);
       return;
     }
 
@@ -585,23 +808,35 @@ class WebsocketClientApp {
 
   private renderKnowledgeSources(
     sources: KnowledgeRetrievalSource[],
-    status: string
+    _status: string
   ): void {
-    if (!this.knowledgeSourcesEl) return;
+    if (!this.sourcesCard || !this.knowledgeSourcesEl) return;
+    // Empty retrieval is normal (curriculum / lesson context). Hide the section.
     if (!sources.length) {
-      this.knowledgeSourcesEl.textContent =
-        status === 'no_match'
-          ? 'No matching uploaded sources for the latest answer.'
-          : 'No sources listed for the latest answer.';
+      this.sourcesCard.hidden = true;
+      this.knowledgeSourcesEl.replaceChildren();
       return;
     }
-    this.knowledgeSourcesEl.textContent = sources
-      .map((s) =>
-        s.page != null
-          ? `${s.label}: ${s.document_name} (page ${s.page})`
-          : `${s.label}: ${s.document_name}`
-      )
-      .join(' · ');
+    this.sourcesCard.hidden = false;
+    this.knowledgeSourcesEl.replaceChildren();
+    for (const source of sources) {
+      const item = document.createElement('li');
+      item.className = 'sources-item';
+      const label = document.createElement('span');
+      label.className = 'sources-label';
+      label.textContent = source.label;
+      const name = document.createElement('span');
+      name.className = 'sources-name';
+      name.textContent = source.document_name;
+      item.append(label, name);
+      if (source.page != null) {
+        const page = document.createElement('span');
+        page.className = 'sources-page';
+        page.textContent = `Page ${source.page}`;
+        item.appendChild(page);
+      }
+      this.knowledgeSourcesEl.appendChild(item);
+    }
   }
 
   private setKnowledgeStatus(message: string): void {
@@ -789,6 +1024,7 @@ class WebsocketClientApp {
       this.hideJumpLatest();
       this.renderConversation();
       this.configureSent = false;
+      this.showPreparingDisplay();
       this.updateStatus('Connecting');
       if (this.transcriptConsent) {
         this.transcriptConsent.disabled = true;
@@ -815,6 +1051,8 @@ class WebsocketClientApp {
             this.pendingRequestId = null;
             this.configureSent = false;
             this.sessionConsentLocked = false;
+            this.stateTracker.reset();
+            this.showWelcomeDisplay();
             this.updateStatus('Disconnected');
             this.applyControlAvailability(null);
             if (this.transcriptConsent) {
@@ -858,7 +1096,12 @@ class WebsocketClientApp {
       this.log(`Error connecting: ${(error as Error).message}`);
       this.updateStatus('Error');
       this.connected = false;
+      this.showWelcomeDisplay();
       this.applyControlAvailability(null);
+      if (this.transcriptConsent) {
+        this.transcriptConsent.disabled = false;
+      }
+      this.updateTranscriptStorageLabel();
       if (this.pcClient) {
         try {
           await this.pcClient.disconnect();
@@ -878,8 +1121,7 @@ class WebsocketClientApp {
         this.commandPending = false;
         this.pendingRequestId = null;
         this.stateTracker.reset();
-        this.renderSlideTrack(0);
-        this.setTutorStatusFromMode(null);
+        this.showWelcomeDisplay();
         this.applyControlAvailability(null);
         if (
           this.botAudio.srcObject &&

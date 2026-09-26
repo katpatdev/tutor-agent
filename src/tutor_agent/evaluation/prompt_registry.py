@@ -40,7 +40,9 @@ class LoadedPrompt:
 
 
 def default_prompts_root() -> Path:
-    return Path(__file__).resolve().parent / "prompts"
+    from tutor_agent.paths import prompts_dir
+
+    return prompts_dir()
 
 
 def sha256_text(text: str) -> str:

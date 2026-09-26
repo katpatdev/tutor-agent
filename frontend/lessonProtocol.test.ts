@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   CLIENT_PROTOCOL_FORBIDDEN_KEYS,
+  ConversationTracker,
   createGotoCommand,
   createPauseCommand,
   createRequestId,
@@ -257,5 +258,68 @@ describe('lessonProtocol', () => {
     const hasSegmentText: HasSegmentText = false;
     expect(hasText).toBe(false);
     expect(hasSegmentText).toBe(false);
+  });
+});
+
+describe('ConversationTracker idempotency', () => {
+  it('does not duplicate when snapshot is followed by the same created event', () => {
+    const tracker = new ConversationTracker();
+    const entry = {
+      entry_id: 'narr-1',
+      sequence: 1,
+      role: 'assistant' as const,
+      text: 'First section.',
+      timestamp: 100,
+      source: 'narration',
+    };
+    tracker.applySnapshot([entry]);
+    expect(tracker.applyEvent('created', { ...entry, playback_status: 'queued' })).toBe(
+      true
+    );
+    expect(tracker.list).toHaveLength(1);
+    expect(tracker.list[0].entry_id).toBe('narr-1');
+    expect(tracker.list[0].playback_status).toBe('queued');
+  });
+
+  it('keeps duplicate updated events idempotent by entry_id', () => {
+    const tracker = new ConversationTracker();
+    const entry = {
+      entry_id: 'narr-2',
+      sequence: 2,
+      role: 'assistant' as const,
+      text: 'Hello',
+      timestamp: 200,
+    };
+    expect(tracker.applyEvent('created', entry)).toBe(true);
+    expect(
+      tracker.applyEvent('updated', {
+        ...entry,
+        sequence: 2,
+        playback_status: 'speaking',
+      })
+    ).toBe(true);
+    expect(
+      tracker.applyEvent('updated', {
+        ...entry,
+        sequence: 2,
+        playback_status: 'spoken',
+      })
+    ).toBe(true);
+    expect(tracker.list).toHaveLength(1);
+    expect(tracker.list[0].playback_status).toBe('spoken');
+  });
+
+  it('does not create a second row for a duplicated created event', () => {
+    const tracker = new ConversationTracker();
+    const entry = {
+      entry_id: 'same',
+      sequence: 5,
+      role: 'assistant' as const,
+      text: 'Same',
+      timestamp: 1,
+    };
+    expect(tracker.applyEvent('created', entry)).toBe(true);
+    expect(tracker.applyEvent('created', entry)).toBe(true);
+    expect(tracker.list).toHaveLength(1);
   });
 });

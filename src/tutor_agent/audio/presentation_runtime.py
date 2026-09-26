@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Any, Awaitable, Callable, List, Optional, Protocol, Sequence, Set
 
-from lesson_controller import (
+from tutor_agent.lesson.lesson_controller import (
     InvalidLessonTransition,
     LessonController,
     LessonEffect,
@@ -19,7 +19,7 @@ from lesson_controller import (
     NarrationCursor,
     TransitionResult,
 )
-from narration_plan import (
+from tutor_agent.narration.narration_plan import (
     DEFAULT_MAX_SEGMENT_CHARACTERS,
     DEFAULT_MIN_SEGMENT_CHARACTERS,
     NarrationGenerationId,
@@ -29,8 +29,8 @@ from narration_plan import (
     invalidate_plan,
     new_generation_id,
 )
-from prompt_registry import LoadedPrompt, load_active_tutor_prompt
-from safety_policy import (
+from tutor_agent.evaluation.prompt_registry import LoadedPrompt, load_active_tutor_prompt
+from tutor_agent.safety.safety_policy import (
     PolicyDecision,
     SafetyDecision,
     SafetyEvent,
@@ -38,18 +38,18 @@ from safety_policy import (
     TEMPLATES,
     template_text,
 )
-from slide_narration_prompt import (
+from tutor_agent.lesson.slide_narration_prompt import (
     format_slide_narration_instruction,
     strip_slide_narration_instructions,
 )
-from presentation_tts_delivery import TtsDeliveryController
-from tts_unit import SpeechUnitKind, TtsRecoveryConfig, load_tts_recovery_config
-from curriculum import slide_title
-from classroom_control import (
+from tutor_agent.audio.presentation_tts_delivery import TtsDeliveryController
+from tutor_agent.audio.tts_unit import OwnedSpeechUnit, SpeechUnitKind, TtsRecoveryConfig, load_tts_recovery_config
+from tutor_agent.lesson.curriculum import slide_title
+from tutor_agent.lesson.classroom_control import (
     ClassroomControlIntent,
     ClassroomControlKind,
 )
-from classroom_copy import (
+from tutor_agent.lesson.classroom_copy import (
     CHECKPOINT_REMINDER,
     POST_ANSWER_REMINDER,
     QUESTION_PREAMBLE,
@@ -64,19 +64,19 @@ from classroom_copy import (
     return_bridge,
     topic_for_slide,
 )
-from conversation_ledger import (
+from tutor_agent.lesson.conversation_ledger import (
     ConversationLedger,
     PlaybackStatus,
     PublishFn,
     TutorSource,
     DEFAULT_MAX_ENTRIES as CONVERSATION_MAX_ENTRIES,
 )
-from lesson_context import (
+from tutor_agent.lesson.lesson_context import (
     build_lesson_context_snapshot,
     lesson_context_message_dict,
 )
-from narration_prefetch import NarrationPrefetchCache, PrefetchState
-from voice_navigation import VoiceNavAction, VoiceNavIntent
+from tutor_agent.narration.narration_prefetch import NarrationPrefetchCache, PrefetchState
+from tutor_agent.lesson.voice_navigation import VoiceNavAction, VoiceNavIntent
 import os
 
 
@@ -1142,6 +1142,7 @@ class PresentationRuntime:
         slide_index: Optional[int] = None,
         narration_generation_id: Optional[str] = None,
         segment_index: Optional[int] = None,
+        logical_id: Optional[str] = None,
     ) -> None:
         unit = await self._tts.queue_unit(
             text,
@@ -1151,6 +1152,7 @@ class PresentationRuntime:
             slide_index=slide_index,
             narration_generation_id=narration_generation_id,
             segment_index=segment_index,
+            logical_id=logical_id,
         )
         await self._mirror_tutor_unit(unit)
 
@@ -1220,7 +1222,9 @@ class PresentationRuntime:
         if self._narration_plan is not None:
             self._narration_plan.segment_queued = False
 
-    async def _queue_active_segment(self, replay: bool = False) -> None:
+    async def _queue_active_segment(
+        self, replay: bool = False, *, explicit_repeat: bool = False
+    ) -> None:
         plan = self._narration_plan
         if (
             plan is None
@@ -1242,8 +1246,10 @@ class PresentationRuntime:
         self._resume_segment_pending = False
         if replay:
             self.segment_replays += 1
+        # Pause/resume replay must not look like an explicit student Repeat.
+        if explicit_repeat:
             self._mirror_next_as_repeat = True
-        await self._queue_tts_speak(text)
+        await self._queue_tts_speak(text, explicit_repeat=explicit_repeat)
 
     def _mark_active_segment_interrupted(self) -> None:
         plan = self._narration_plan
@@ -1273,11 +1279,37 @@ class PresentationRuntime:
             frame = TTSSpeakFrame(text=text)
         await self._frame_sink.queue_frames([frame])
 
-    async def _queue_tts_speak(self, text: str) -> None:
+    @staticmethod
+    def _narration_conversation_id(
+        *,
+        generation_id: str,
+        segment_index: int,
+        explicit_repeat: bool = False,
+    ) -> str:
+        """Stable semantic id for one narration segment across pause/resume.
+
+        Physical TTS ``unit_id`` may rotate for watchdogs; this id must not.
+        Explicit student repeats get a distinct id so they appear separately.
+        """
+        base = f"narration:{generation_id}:{segment_index}"
+        if explicit_repeat:
+            return f"{base}:repeat:{OwnedSpeechUnit.new_id()}"
+        return base
+
+    async def _queue_tts_speak(
+        self, text: str, *, explicit_repeat: bool = False
+    ) -> None:
         """Queue narration TTS with ownership metadata and start watchdog."""
         plan = self._narration_plan
         gen = str(plan.generation_id) if plan is not None else None
         seg = plan.active_segment_index if plan is not None else None
+        logical_id: Optional[str] = None
+        if gen is not None and seg is not None:
+            logical_id = self._narration_conversation_id(
+                generation_id=gen,
+                segment_index=seg,
+                explicit_repeat=explicit_repeat,
+            )
         unit = await self._tts.queue_unit(
             text,
             kind=SpeechUnitKind.NARRATION,
@@ -1286,6 +1318,7 @@ class PresentationRuntime:
             slide_index=self._controller.state.cursor.slide_index,
             narration_generation_id=gen,
             segment_index=seg,
+            logical_id=logical_id,
         )
         await self._mirror_tutor_unit(unit)
 
@@ -2540,7 +2573,7 @@ class PresentationRuntime:
         self.segment_replays += 1
         self._last_replay_segment_index = index
         self._output_purpose = OutputPurpose.RESUMED_NARRATION
-        await self._queue_active_segment(replay=True)
+        await self._queue_active_segment(explicit_repeat=True)
         await self._notify_state_changed()
         return True
 

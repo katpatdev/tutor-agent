@@ -1,7 +1,7 @@
 [project]
-name = "agent"
+name = "tutor-agent"
 version = "0.1.0"
-description = "Add your description here"
+description = "Pipecat and OpenAI voice tutor for a natural-disaster classroom lesson"
 readme = "README.md"
 requires-python = "==3.11.14"
 dependencies = [
@@ -12,7 +12,24 @@ dependencies = [
     "python-multipart==0.0.20",
 ]
 
+[project.scripts]
+tutor-agent = "tutor_agent.main:run"
+tutor-session-export = "tutor_agent.observability.session_export:main"
+tutor-eval = "tutor_agent.evaluation.eval_harness:main"
+tutor-flywheel = "tutor_agent.evaluation.flywheel:main"
+tutor-prompt-workflow = "tutor_agent.evaluation.prompt_workflow:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

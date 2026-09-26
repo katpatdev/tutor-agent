@@ -14,8 +14,8 @@ from dataclasses import dataclass
 import pytest
 from fastapi.testclient import TestClient
 
-from lesson_controller import LessonMode
-from narration_plan import (
+from tutor_agent.lesson.lesson_controller import LessonMode
+from tutor_agent.narration.narration_plan import (
     NarrationConfigError,
     ResumeAccuracy,
     SegmentStatus,
@@ -23,7 +23,7 @@ from narration_plan import (
     load_narration_max_characters,
     segment_narration_text,
 )
-from presentation_runtime import (
+from tutor_agent.audio.presentation_runtime import (
     OutputPurpose,
     PresentationRuntime,
     RecordingFrameSink,
@@ -31,8 +31,8 @@ from presentation_runtime import (
     make_test_transform_frame,
     make_test_interruption_frame,
 )
-from session_metrics import SessionMetricsCollector
-from slide_narration_prompt import is_slide_narration_instruction
+from tutor_agent.observability.session_metrics import SessionMetricsCollector
+from tutor_agent.lesson.slide_narration_prompt import is_slide_narration_instruction
 
 
 @dataclass
@@ -216,7 +216,7 @@ def test_interruption_answer_resumes_same_segment_without_advancing_slide() -> N
         assert runtime.output_purpose is OutputPurpose.POST_ANSWER_INVITE
         await runtime.on_bot_started_speaking()
         await runtime.on_bot_stopped_speaking()
-        from classroom_control import parse_classroom_control
+        from tutor_agent.lesson.classroom_control import parse_classroom_control
         assert await runtime.handle_classroom_control(parse_classroom_control("Continue."))
         assert runtime.output_purpose is OutputPurpose.RESUME_BRIDGE
         await runtime.on_bot_started_speaking()
@@ -323,11 +323,11 @@ def test_health_endpoints_are_offline_and_use_temporary_session_db(
     monkeypatch.setenv("TRANSCRIPT_PERSISTENCE_ENABLED", "false")
     monkeypatch.setenv("OPENAI_API_KEY", "offline-test-placeholder")
 
-    for module_name in ("main", "agent"):
+    for module_name in ("main", "agent", "tutor_agent.main", "tutor_agent.agent"):
         sys.modules.pop(module_name, None)
 
-    import embedding_service
-    import moderation_service
+    import tutor_agent.knowledge.embedding_service as embedding_service
+    import tutor_agent.safety.moderation_service as moderation_service
 
     async def _network_forbidden(*args, **kwargs):
         raise AssertionError("health route attempted an OpenAI request")
@@ -343,7 +343,7 @@ def test_health_endpoints_are_offline_and_use_temporary_session_db(
         _network_forbidden,
     )
 
-    import main
+    import tutor_agent.main as main
 
     with TestClient(main.app) as client:
         live = client.get("/health/live")
@@ -422,7 +422,7 @@ def test_second_interrupt_during_answer_is_deterministic() -> None:
 
 def test_safety_redirect_does_not_complete_slide() -> None:
     async def _run() -> None:
-        from safety_policy import PolicyDecision, SafetyDecision, SafetyReason, SafetySource
+        from tutor_agent.safety.safety_policy import PolicyDecision, SafetyDecision, SafetyReason, SafetySource
 
         runtime, _ = make_runtime()
         await runtime.start_session()

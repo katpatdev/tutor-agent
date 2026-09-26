@@ -9,7 +9,7 @@ import asyncio
 import time
 from typing import Any, Awaitable, Callable, List, Optional
 
-from tts_unit import (
+from tutor_agent.audio.tts_unit import (
     OwnedSpeechUnit,
     SpeechUnitKind,
     TtsRecoveryConfig,
@@ -104,6 +104,7 @@ class TtsDeliveryController:
         answer_unit_index: Optional[int] = None,
         answer_unit_total: Optional[int] = None,
         attempt: int = 1,
+        logical_id: Optional[str] = None,
     ) -> OwnedSpeechUnit:
         if self.pending is not None and not self.pending.cancelled:
             self.invalidate_pending(reason="replaced")
@@ -113,6 +114,7 @@ class TtsDeliveryController:
             purpose_name=purpose_name,
             utterance_id=utterance_id,
             text=text,
+            logical_id=logical_id or "",
             slide_index=slide_index,
             narration_generation_id=narration_generation_id,
             segment_index=segment_index,

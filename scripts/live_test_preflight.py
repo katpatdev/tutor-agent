@@ -18,9 +18,6 @@ EXPECTED_PYTHON = (3, 11, 14)
 EXPECTED_NODE_MAJOR = 22
 EXPECTED_YARN = "1.22.22"
 
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
 
 def result(label: str, ok: bool, detail: str) -> bool:
     print(f"[{'PASS' if ok else 'FAIL'}] {label}: {detail}")
@@ -139,10 +136,10 @@ def main() -> int:
         )
 
     modules = (
-        "narration_plan",
-        "presentation_runtime",
-        "lesson_protocol",
-        "session_metrics",
+        "tutor_agent.narration.narration_plan",
+        "tutor_agent.audio.presentation_runtime",
+        "tutor_agent.lesson.lesson_protocol",
+        "tutor_agent.observability.session_metrics",
     )
     try:
         for module in modules:
@@ -153,7 +150,7 @@ def main() -> int:
         checks.append(result("Backend module imports", True, ", ".join(modules)))
 
     try:
-        from prompt_registry import load_active_tutor_prompt
+        from tutor_agent.evaluation.prompt_registry import load_active_tutor_prompt
 
         prompt = load_active_tutor_prompt()
         prompt_detail = (

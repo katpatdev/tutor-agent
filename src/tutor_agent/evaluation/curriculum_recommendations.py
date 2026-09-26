@@ -6,7 +6,7 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Dict, List, Sequence
 
-from friction_analyzer import FrictionSignal, InterventionCategory
+from tutor_agent.evaluation.friction_analyzer import FrictionSignal, InterventionCategory
 
 
 @dataclass(frozen=True)
