@@ -22,6 +22,7 @@ from presentation_runtime import (
     PresentationRuntime,
     RecordingFrameSink,
     make_test_append_frame,
+    make_test_transform_frame,
     make_test_interruption_frame,
 )
 from safety_policy import (
@@ -51,6 +52,7 @@ def make_runtime(client: FakeModerationClient | None = None):
         frame_sink=sink,
         interruption_frame_factory=make_test_interruption_frame,
         messages_append_frame_factory=make_test_append_frame,
+        messages_transform_frame_factory=make_test_transform_frame,
     )
 
     def tts_factory(*, text: str):
@@ -347,7 +349,7 @@ def test_output_allow_and_block() -> None:
     from pipecat.processors.frame_processor import FrameDirection
 
     allow_client = FakeModerationClient()
-    runtime, _, _ = make_runtime(allow_client)
+    runtime, sink, _ = make_runtime(allow_client)
     proc = OutputSafetyProcessor(
         runtime=runtime, moderation_client=allow_client, config=SafetyConfig()
     )
@@ -367,7 +369,9 @@ def test_output_allow_and_block() -> None:
         await proc.process_frame(LLMFullResponseEndFrame(), FrameDirection.DOWNSTREAM)
 
     asyncio.run(_allow())
-    assert any(getattr(f, "text", "") for f in pushed)
+    assert any("Earthquakes" in t for t in sink.tts_texts) or any(
+        getattr(f, "text", "") for f in pushed
+    )
 
     block_client = FakeModerationClient(
         rules=[("blood", flagged_result("violence_graphic"))]

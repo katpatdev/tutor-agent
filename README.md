@@ -69,7 +69,9 @@ Do not put `OPENAI_API_KEY` in frontend / `VITE_` variables.
 
 #### Learning flywheel & evaluations (Iteration 8)
 
-- Prompt registry: `prompts/` + `TUTOR_PROMPT_VERSION` (default `v1`). Candidates under `data/prompt_candidates/` never auto-activate.
+- Prompt registry: `prompts/` + `TUTOR_PROMPT_VERSION` (default `v3`). Candidates under `data/prompt_candidates/` never auto-activate.
+- Classroom controls (deterministic, no LLM): natural next/previous/goto, “I got it”, “continue”, “repeat this line”, Q&A “that’s all” closing.
+- Q&A wind-down: `QA_SILENCE_TIMEOUT_SECONDS` (default 12) — reminder, then polite close → `FINISHED`.
 - Local friction analysis (no OpenAI on historical transcripts): `uv run python -m flywheel analyze`
 - Offline eval validation: `uv run python -m eval_harness validate` / `run-offline-fixtures`
 - See `docs/LEARNING_FLYWHEEL.md` and `docs/EVALUATIONS.md`.

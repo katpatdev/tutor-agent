@@ -14,15 +14,24 @@ from lesson_controller import (
     LessonMode,
     NarrationCursor,
 )
+from classroom_control import parse_classroom_control
 from presentation_runtime import (
     OutputPurpose,
     PresentationRuntime,
     RecordingFrameSink,
     make_test_append_frame,
+    make_test_transform_frame,
     make_test_interruption_frame,
 )
+from slide_narration_prompt import is_slide_narration_instruction
 
 SLIDES = [f"SLIDE {i} CONTENT" for i in range(8)]
+
+
+def _assert_slide_instruction(messages: list[str], raw: str) -> None:
+    assert messages, "expected at least one system message"
+    assert is_slide_narration_instruction(messages[-1])
+    assert raw in messages[-1]
 
 
 def make_runtime(
@@ -35,6 +44,7 @@ def make_runtime(
         controller=controller,
         interruption_frame_factory=make_test_interruption_frame,
         messages_append_frame_factory=make_test_append_frame,
+        messages_transform_frame_factory=make_test_transform_frame,
     )
     return runtime, sink
 
@@ -43,12 +53,53 @@ async def narrate_current_slide(
     runtime: PresentationRuntime, text: str = "First sentence. Second sentence."
 ) -> None:
     """Approve segmented narration then drive bot lifecycle for every segment."""
+    # Drain any pending transition / checkpoint speech first.
+    for _ in range(5):
+        purpose = runtime.output_purpose
+        if purpose in {
+            OutputPurpose.NAV_ACK,
+            OutputPurpose.SLIDE_CHECKPOINT,
+            OutputPurpose.SLIDE_TRANSITION,
+            OutputPurpose.POST_ANSWER_INVITE,
+        }:
+            await runtime.on_bot_started_speaking()
+            await runtime.on_bot_stopped_speaking()
+            continue
+        break
     await runtime.accept_approved_narration(text)
     plan = runtime.narration_plan
     total = plan.total_segments if plan is not None else 1
     for _ in range(total):
         await runtime.on_bot_started_speaking()
         await runtime.on_bot_stopped_speaking()
+    # Drain post-complete transition (slide 1→2) or checkpoint prompt.
+    for _ in range(5):
+        purpose = runtime.output_purpose
+        if purpose in {
+            OutputPurpose.NAV_ACK,
+            OutputPurpose.SLIDE_CHECKPOINT,
+            OutputPurpose.SLIDE_TRANSITION,
+        }:
+            await runtime.on_bot_started_speaking()
+            await runtime.on_bot_stopped_speaking()
+            continue
+        break
+
+
+async def advance_from_checkpoint(runtime: PresentationRuntime) -> None:
+    """At a slide checkpoint, continue to the next slide and drain transition."""
+    from classroom_control import parse_classroom_control
+
+    assert runtime.in_slide_checkpoint or (
+        runtime.narration_plan is not None and runtime.narration_plan.is_complete
+    )
+    assert await runtime.handle_classroom_control(parse_classroom_control("Continue."))
+    for _ in range(5):
+        if runtime.output_purpose is OutputPurpose.NAV_ACK:
+            await runtime.on_bot_started_speaking()
+            await runtime.on_bot_stopped_speaking()
+            continue
+        break
 
 
 def test_01_one_controller_per_session() -> None:
@@ -65,7 +116,8 @@ def test_02_session_start_presents_slide_0_once() -> None:
         assert runtime.state.mode is LessonMode.PRESENTING
         assert runtime.state.cursor.slide_index == 0
         assert runtime.output_purpose is OutputPurpose.SLIDE_NARRATION
-        assert sink.system_messages == ["SLIDE 0 CONTENT"]
+        _assert_slide_instruction(sink.system_messages, "SLIDE 0 CONTENT")
+        assert any(getattr(f, "kind", None) == "messages_transform" for f in sink.frames)
 
     asyncio.run(_run())
 
@@ -75,7 +127,8 @@ def test_03_duplicate_start_does_not_present_twice() -> None:
         runtime, sink = make_runtime()
         await runtime.start_session()
         await runtime.start_session()
-        assert sink.system_messages == ["SLIDE 0 CONTENT"]
+        _assert_slide_instruction(sink.system_messages, "SLIDE 0 CONTENT")
+        assert len(sink.system_messages) == 1
         assert runtime.state.cursor.slide_index == 0
 
     asyncio.run(_run())
@@ -88,7 +141,7 @@ def test_04_normal_completion_advances_exactly_one_slide() -> None:
         await narrate_current_slide(runtime)
         assert runtime.state.cursor.slide_index == 1
         assert runtime.state.mode is LessonMode.PRESENTING
-        assert sink.system_messages[-1] == "SLIDE 1 CONTENT"
+        _assert_slide_instruction(sink.system_messages, "SLIDE 1 CONTENT")
 
     asyncio.run(_run())
 
@@ -125,8 +178,9 @@ def test_07_interruption_saves_logical_cursor() -> None:
     async def _run() -> None:
         runtime, _ = make_runtime()
         await runtime.start_session()
-        await narrate_current_slide(runtime)
-        await narrate_current_slide(runtime)
+        await narrate_current_slide(runtime)  # slide 0 → auto slide 1
+        await narrate_current_slide(runtime)  # slide 1 → checkpoint
+        await advance_from_checkpoint(runtime)  # → slide 2
         assert runtime.state.cursor.slide_index == 2
         await runtime.on_bot_started_speaking()
         await runtime.on_user_started_speaking()
@@ -150,6 +204,10 @@ def test_08_answer_completion_returns_to_interrupted_slide() -> None:
         await runtime.on_bot_stopped_speaking()
         assert runtime.state.mode is LessonMode.PRESENTING
         assert runtime.state.cursor.slide_index == 1
+        assert runtime.output_purpose is OutputPurpose.POST_ANSWER_INVITE
+        await runtime.on_bot_started_speaking()
+        await runtime.on_bot_stopped_speaking()
+        assert await runtime.handle_classroom_control(parse_classroom_control("Continue."))
         assert runtime.output_purpose is OutputPurpose.RESUMED_NARRATION
 
     asyncio.run(_run())
@@ -189,7 +247,12 @@ def test_11_valid_slide_navigation_presents_requested_slide() -> None:
         await runtime.go_to_slide(5)
         assert runtime.state.mode is LessonMode.PRESENTING
         assert runtime.state.cursor == NarrationCursor(5, 0, 0)
-        assert "SLIDE 5 CONTENT" in sink.system_messages
+        # Drain transition acknowledgement then slide instruction is queued.
+        if runtime.output_purpose is OutputPurpose.NAV_ACK:
+            await runtime.on_bot_started_speaking()
+            await runtime.on_bot_stopped_speaking()
+        assert any("SLIDE 5 CONTENT" in msg for msg in sink.system_messages)
+        _assert_slide_instruction(sink.system_messages, "SLIDE 5 CONTENT")
 
     asyncio.run(_run())
 
@@ -214,11 +277,14 @@ def test_13_slides_0_through_7_are_reachable() -> None:
         runtime, sink = make_runtime()
         await runtime.start_session()
         seen = {0}
-        for _ in range(7):
-            await narrate_current_slide(runtime)
+        await narrate_current_slide(runtime)  # 0 → 1
+        seen.add(runtime.state.cursor.slide_index)
+        for _ in range(6):
+            await narrate_current_slide(runtime)  # completes → checkpoint
+            await advance_from_checkpoint(runtime)
             seen.add(runtime.state.cursor.slide_index)
         assert seen == set(range(8))
-        assert all(f"SLIDE {i} CONTENT" in sink.system_messages for i in range(8))
+        assert any("SLIDE 0 CONTENT" in msg for msg in sink.system_messages)
 
     asyncio.run(_run())
 
@@ -227,8 +293,10 @@ def test_14_completing_slide_7_enters_qa_mode() -> None:
     async def _run() -> None:
         runtime, _ = make_runtime()
         await runtime.start_session()
-        for _ in range(7):
+        await narrate_current_slide(runtime)  # → slide 1
+        for _ in range(6):
             await narrate_current_slide(runtime)
+            await advance_from_checkpoint(runtime)
         assert runtime.state.cursor.slide_index == 7
         await narrate_current_slide(runtime)
         assert runtime.state.mode is LessonMode.QA_MODE
@@ -240,8 +308,11 @@ def test_15_completing_slide_7_does_not_finish_session() -> None:
     async def _run() -> None:
         runtime, _ = make_runtime()
         await runtime.start_session()
-        for _ in range(8):
+        await narrate_current_slide(runtime)
+        for _ in range(6):
             await narrate_current_slide(runtime)
+            await advance_from_checkpoint(runtime)
+        await narrate_current_slide(runtime)
         assert runtime.state.mode is LessonMode.QA_MODE
         assert runtime.state.mode is not LessonMode.FINISHED
 
@@ -252,15 +323,16 @@ def test_16_qa_transition_queued_once() -> None:
     async def _run() -> None:
         runtime, sink = make_runtime()
         await runtime.start_session()
-        for _ in range(8):
+        await narrate_current_slide(runtime)
+        for _ in range(6):
             await narrate_current_slide(runtime)
-        qa_msgs = [m for m in sink.system_messages if "Q&A" in m or "open Q&A" in m]
+            await advance_from_checkpoint(runtime)
+        await narrate_current_slide(runtime)
+        qa_msgs = [m for m in sink.system_messages if "open Q&A" in m]
         assert len(qa_msgs) == 1
         await runtime.on_bot_started_speaking()
         await runtime.on_bot_stopped_speaking()
-        qa_msgs_after = [
-            m for m in sink.system_messages if "Q&A" in m or "open Q&A" in m
-        ]
+        qa_msgs_after = [m for m in sink.system_messages if "open Q&A" in m]
         assert len(qa_msgs_after) == 1
 
     asyncio.run(_run())
@@ -317,6 +389,10 @@ def test_20_output_purpose_distinguishes_narration_from_answers() -> None:
         await runtime.on_bot_stopped_speaking()
         await runtime.on_bot_started_speaking()
         await runtime.on_bot_stopped_speaking()
+        assert runtime.output_purpose is OutputPurpose.POST_ANSWER_INVITE
+        await runtime.on_bot_started_speaking()
+        await runtime.on_bot_stopped_speaking()
+        assert await runtime.handle_classroom_control(parse_classroom_control("Continue."))
         assert runtime.output_purpose is OutputPurpose.RESUMED_NARRATION
 
     asyncio.run(_run())

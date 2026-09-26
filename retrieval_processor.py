@@ -34,6 +34,10 @@ from knowledge_ingestion import (
 )
 from knowledge_store import InMemoryKnowledgeStore, SearchHit, VectorStoreError
 from lesson_controller import LessonMode
+from lesson_context import (
+    lesson_context_message_dict,
+    strip_lesson_context_messages,
+)
 from lesson_protocol import wrap_rtvi_server_message
 from presentation_runtime import OutputPurpose, PresentationRuntime
 from safety_policy import SafetyStatus
@@ -131,10 +135,14 @@ class RetrievalProcessor(FrameProcessor):
             if not text:
                 return
 
+            self._runtime.note_student_question(text)
+
             if not self._should_retrieve(text):
-                # Still clear stale RAG so prior turn context cannot leak.
                 await self.push_frame(
-                    LLMMessagesTransformFrame(transform=strip_rag_messages, run_llm=False),
+                    LLMMessagesTransformFrame(
+                        transform=self._strip_and_inject_lesson_context,
+                        run_llm=False,
+                    ),
                     direction,
                 )
                 await self.push_frame(frame, direction)
@@ -144,6 +152,14 @@ class RetrievalProcessor(FrameProcessor):
             return
 
         await self.push_frame(frame, direction)
+
+    def _strip_and_inject_lesson_context(self, messages):
+        cleaned = strip_lesson_context_messages(strip_rag_messages(messages))
+        snap = self._runtime.build_lesson_context_snapshot(
+            latest_question=self._runtime._latest_student_question  # noqa: SLF001
+        )
+        cleaned.append(lesson_context_message_dict(snap))
+        return cleaned
 
     async def _retrieve_and_inject(
         self, text: str, frame: TranscriptionFrame, direction: FrameDirection
@@ -156,9 +172,12 @@ class RetrievalProcessor(FrameProcessor):
         hits: List[SearchHit] = []
         fallback: Optional[str] = None
 
-        # Always strip previous RAG context first (temporary per-turn).
+        # Strip prior RAG + lesson context; re-inject authoritative snapshot.
         await self.push_frame(
-            LLMMessagesTransformFrame(transform=strip_rag_messages, run_llm=False),
+            LLMMessagesTransformFrame(
+                transform=self._strip_and_inject_lesson_context,
+                run_llm=False,
+            ),
             direction,
         )
 

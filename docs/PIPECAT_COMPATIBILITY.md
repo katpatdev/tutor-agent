@@ -134,7 +134,12 @@ Verified against installed `pipecat-ai==1.11.0`:
 
 Also present but **not** aggregated by this app: `TTFAMetricsData`, `TTFATMetricsData`, `TextAggregationMetricsData`, `TurnMetricsData` / deprecated `SmartTurnMetricsData`.
 
-Observers available in install: `MetricsLogObserver`, `ServiceMetricsObserver`. Application uses custom `LessonLifecycleObserver` to ingest `MetricsFrame` into per-session collectors.
+Observers available in install: `MetricsLogObserver`,
+`ServiceMetricsObserver`. Application uses custom `LessonLifecycleObserver`
+to ingest `MetricsFrame` and to forward speaking/lifecycle and inbound
+transport messages **once per physical frame** (Pipecat notifies observers on
+every pipeline hop).
+
 
 `PipelineParams(enable_metrics=True, enable_usage_metrics=True)` enables emission.
 
@@ -145,4 +150,15 @@ Limitations: metric availability depends on each OpenAI STT/LLM/TTS service impl
 - End-to-end audio quality and live control timing under real TTS load
 - Exact playback-offset resume (not available; deterministic segment-level resume is implemented)
 - Live moderation / embedding / metrics latency under production network conditions
-- **LIVE OPENAI VALIDATION NOT RUN**
+- Narration naturalness and curriculum coverage for all eight slides (manual content review)
+- TTS no-audio retry and voice-navigation under live conditions (Iteration 10.4)
+- Interruption, RAG, consent, and safety scenarios that lack their own confirmed live PASS
+
+## TTS no-audio (verified in pipecat-ai==1.11.0)
+
+`TTSService._record_context_audio_outcome` pushes
+`ErrorFrame(error="TTS context {uuid} completed with no audio", processor=<TTS>)`.
+`BaseOutputTransport` emits `BotStoppedSpeaking` from `TTSStoppedFrame` only when
+TTS audio was received. Application recovery observes `ErrorFrame` once per frame
+id, matches the TTS processor, and retries the owned unit without regenerating
+LLM text or re-running moderation.

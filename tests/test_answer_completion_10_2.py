@@ -14,6 +14,7 @@ from presentation_runtime import (
     PresentationRuntime,
     RecordingFrameSink,
     make_test_append_frame,
+    make_test_transform_frame,
     make_test_interruption_frame,
 )
 from speech_chunking import count_tts_units_for_text, pack_spoken_units
@@ -37,7 +38,9 @@ def make_runtime(
         frame_sink=sink,
         interruption_frame_factory=make_test_interruption_frame,
         messages_append_frame_factory=make_test_append_frame,
+        messages_transform_frame_factory=make_test_transform_frame,
         narration_max_characters=max_characters,
+        narration_min_characters=1,
         no_answer_timeout_seconds=0.05,
     )
     runtime.set_tts_speak_frame_factory(FakeTTSSpeakFrame)
@@ -89,6 +92,11 @@ def test_pre_audio_interruption_answer_completion_is_accepted() -> None:
         await runtime.on_bot_started_speaking()
         await runtime.on_bot_stopped_speaking()
         assert runtime.state.mode is LessonMode.PRESENTING
+        assert runtime.output_purpose is OutputPurpose.POST_ANSWER_INVITE
+        await runtime.on_bot_started_speaking()
+        await runtime.on_bot_stopped_speaking()
+        from classroom_control import parse_classroom_control
+        assert await runtime.handle_classroom_control(parse_classroom_control("Continue."))
         assert runtime.output_purpose is OutputPurpose.RESUMED_NARRATION
 
     asyncio.run(_run())
@@ -117,6 +125,11 @@ def test_mid_audio_interruption_suppresses_only_cancelled_utterance() -> None:
         await runtime.on_bot_started_speaking()
         await runtime.on_bot_stopped_speaking()
         assert runtime.state.mode is LessonMode.PRESENTING
+        assert runtime.output_purpose is OutputPurpose.POST_ANSWER_INVITE
+        await runtime.on_bot_started_speaking()
+        await runtime.on_bot_stopped_speaking()
+        from classroom_control import parse_classroom_control
+        assert await runtime.handle_classroom_control(parse_classroom_control("Continue."))
         assert sink.tts_texts[-1] == "First section."
         assert runtime.segment_replays == 1
 

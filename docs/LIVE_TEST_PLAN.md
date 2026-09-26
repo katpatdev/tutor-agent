@@ -1,12 +1,8 @@
-# Iteration 9 live test plan
+# Iteration 9–10 live test plan
 
-> **LIVE OPENAI VALIDATION NOT RUN.**
-
-These scenarios require a human-authorized session with valid OpenAI access,
-microphone/speaker monitoring, browser observation, and a disposable classroom
-knowledge document. Offline tests cannot establish real STT/LLM/TTS latency,
-audio quality, or browser playback timing. Exact playback-offset resume is not
-a pass criterion; the supported behavior is segment-level replay.
+> Controlled live OpenAI sessions have been run (see `docs/LIVE_TEST_RESULTS.md`).
+> Remaining scenarios below still need confirmation after Iteration 10.3 narration changes.
+> Exact playback-offset resume is not a pass criterion; the supported behavior is segment-level replay.
 
 Record the actual result in each **Pass/Fail** and **Notes** field.
 
@@ -210,3 +206,12 @@ Open the printed frontend URL and execute scenarios 1–20 in order. These
 commands are documented only; they were not executed for live validation in
 Iteration 9. Stop immediately if credentials, moderation behavior, consent, or
 student-safety expectations are unclear.
+
+## Iteration 10.5 focused retest (after offline validation)
+
+Use `docs/LIVE_TEST_RESULTS.md` live run 6 checklist. Emphasize:
+
+1. Natural next/previous/goto phrases (including politeness / “if possible”).
+2. “What is on slide six?” must **not** navigate.
+3. “I got it” / “Repeat this line” / “Continue” without LLM re-teach.
+4. Q&A reminder → cancel on speech → explicit “that’s all” close; ambiguous “no” stays open; silence closing ends once.

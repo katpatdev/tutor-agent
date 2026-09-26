@@ -33,6 +33,7 @@ from presentation_runtime import (
     PresentationRuntime,
     RecordingFrameSink,
     make_test_append_frame,
+    make_test_transform_frame,
     make_test_interruption_frame,
 )
 from retrieval_processor import RetrievalProcessor, SessionRetrievalState
@@ -49,6 +50,7 @@ def make_runtime():
         frame_sink=sink,
         interruption_frame_factory=make_test_interruption_frame,
         messages_append_frame_factory=make_test_append_frame,
+        messages_transform_frame_factory=make_test_transform_frame,
     )
     return runtime, sink
 

@@ -31,6 +31,7 @@ class SegmentStatus(str, Enum):
     ACTIVE = "active"
     COMPLETED = "completed"
     INTERRUPTED = "interrupted"
+    USER_ACKNOWLEDGED = "user_acknowledged"
 
 
 @dataclass(frozen=True)
@@ -84,6 +85,7 @@ class NarrationPlan:
     segments: Tuple[NarrationSegment, ...]
     active_segment_index: int = 0
     completed_indexes: frozenset[int] = field(default_factory=frozenset)
+    user_acknowledged_indexes: frozenset[int] = field(default_factory=frozenset)
     active_status: SegmentStatus = SegmentStatus.PENDING
     created_at: float = field(default_factory=time.time)
     resume_accuracy: ResumeAccuracy = ResumeAccuracy.SEGMENT
@@ -120,6 +122,10 @@ class NarrationPlan:
 
 
 DEFAULT_MAX_SEGMENT_CHARACTERS = 320
+# Pack adjacent short sentences into one resume/TTS unit so tiny phrases
+# (e.g. "Hello everyone!") are not separate network round-trips. Larger units
+# replay more speech after an interruption — keep this bounded.
+DEFAULT_MIN_SEGMENT_CHARACTERS = 110
 
 # Decimal / numeric protection: do not split after digit before digit.
 _ABBREV = {
@@ -153,6 +159,24 @@ def load_narration_max_characters(
     if value < 40:
         raise NarrationConfigError(
             "NARRATION_SEGMENT_MAX_CHARACTERS must be >= 40"
+        )
+    return value
+
+
+def load_narration_min_characters(
+    environ: Optional[Mapping[str, str]] = None,
+) -> int:
+    env = environ if environ is not None else os.environ
+    raw = env.get("NARRATION_SEGMENT_MIN_CHARACTERS", str(DEFAULT_MIN_SEGMENT_CHARACTERS))
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise NarrationConfigError(
+            "NARRATION_SEGMENT_MIN_CHARACTERS must be an integer"
+        ) from exc
+    if value < 1:
+        raise NarrationConfigError(
+            "NARRATION_SEGMENT_MIN_CHARACTERS must be >= 1"
         )
     return value
 
@@ -235,13 +259,20 @@ def segment_narration_text(
     text: str,
     *,
     max_characters: int = DEFAULT_MAX_SEGMENT_CHARACTERS,
+    min_characters: int = DEFAULT_MIN_SEGMENT_CHARACTERS,
 ) -> Tuple[NarrationSegment, ...]:
     """Split approved narration into deterministic voice-friendly segments.
 
-    Preserves word order and factual content. Identical inputs → identical outputs.
+    Short adjacent sentences are packed into bounded resume/TTS units so a
+    tiny phrase is not alone. Oversized sentences are clause-split. Preserves
+    word order and factual content. Identical inputs → identical outputs.
     """
     if max_characters < 40:
         raise ValueError("max_characters must be >= 40")
+    if min_characters < 1:
+        raise ValueError("min_characters must be >= 1")
+    # When callers tighten max below the default min (tests), pack to max only.
+    pack_min = min(min_characters, max_characters)
     cleaned = " ".join((text or "").split())
     if not cleaned:
         return tuple()
@@ -262,12 +293,49 @@ def segment_narration_text(
         # No sentence punctuation — treat whole text as one unit (then clause-split).
         sentences = [cleaned]
 
-    chunks: List[str] = []
+    pieces: List[str] = []
     for sentence in sentences:
-        chunks.extend(_split_long_clause(sentence, max_characters))
+        pieces.extend(_split_long_clause(sentence, max_characters))
+
+    packed: List[str] = []
+    buf: List[str] = []
+    buf_len = 0
+
+    def flush() -> None:
+        nonlocal buf, buf_len
+        if not buf:
+            return
+        packed.append(" ".join(buf))
+        buf = []
+        buf_len = 0
+
+    for piece in pieces:
+        piece = piece.strip()
+        if not piece:
+            continue
+        piece_len = len(piece)
+        if not buf:
+            buf = [piece]
+            buf_len = piece_len
+            if buf_len >= pack_min:
+                flush()
+            continue
+        projected = buf_len + 1 + piece_len
+        if projected <= max_characters:
+            buf.append(piece)
+            buf_len = projected
+            if buf_len >= pack_min:
+                flush()
+            continue
+        flush()
+        buf = [piece]
+        buf_len = piece_len
+        if buf_len >= pack_min:
+            flush()
+    flush()
 
     segments: List[NarrationSegment] = []
-    for idx, chunk in enumerate(chunks):
+    for chunk in packed:
         piece = chunk.strip()
         if not piece or all(ch in ".?!\"'”’) " for ch in piece):
             continue
@@ -280,10 +348,15 @@ def build_narration_plan(
     slide_index: int,
     text: str,
     max_characters: int = DEFAULT_MAX_SEGMENT_CHARACTERS,
+    min_characters: int = DEFAULT_MIN_SEGMENT_CHARACTERS,
     generation_id: Optional[NarrationGenerationId] = None,
     resume_accuracy: ResumeAccuracy = ResumeAccuracy.SEGMENT,
 ) -> NarrationPlan:
-    segments = segment_narration_text(text, max_characters=max_characters)
+    segments = segment_narration_text(
+        text,
+        max_characters=max_characters,
+        min_characters=min_characters,
+    )
     return NarrationPlan(
         slide_index=slide_index,
         generation_id=generation_id or new_generation_id(),

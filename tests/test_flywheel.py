@@ -75,7 +75,11 @@ def test_prompt_registry_loads_approved_v1():
     loaded = load_active_tutor_prompt(environ={"TUTOR_PROMPT_VERSION": "v1"})
     assert loaded.record.version == "v1"
     assert loaded.record.approved
-    assert loaded.text == BASE_TUTOR_PROMPT
+    # v1 remains loadable for rollback; active default may be a newer version.
+    assert "natural disasters" in loaded.text.lower()
+    active = load_active_tutor_prompt(environ={"TUTOR_PROMPT_VERSION": "v5"})
+    assert active.text == BASE_TUTOR_PROMPT
+    assert active.record.version == "v5"
 
 
 def test_hash_mismatch_rejected(tmp_path):
@@ -157,7 +161,9 @@ def test_unapproved_prompt_cannot_load(tmp_path):
 
 def test_existing_tutor_prompt_text_preserved():
     assert "natural disasters" in BASE_TUTOR_PROMPT
+    assert "slide" in BASE_TUTOR_PROMPT.lower()
     assert load_active_tutor_prompt().text == BASE_TUTOR_PROMPT
+    assert load_active_tutor_prompt().record.version == "v5"
 
 
 def _create_v1_fixture_db(path: Path) -> None:
@@ -308,7 +314,7 @@ def test_prompt_version_hash_recorded(tmp_path):
     row = sqlite3.connect(cfg.session_db_path).execute(
         "SELECT tutor_prompt_version, tutor_prompt_hash FROM sessions"
     ).fetchone()
-    assert row[0] == "v1"
+    assert row[0] == "v5"
     assert row[1] == loaded.content_hash
 
 

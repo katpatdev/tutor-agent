@@ -16,6 +16,37 @@ The supported guarantee is deterministic **segment-level resume**:
 `EXACT_PLAYBACK` enum/protocol value is reserved for a future implementation
 and must not be presented as a current capability.
 
+## TTS delivery recovery (Iteration 10.4)
+
+Pipecat 1.11.0 `OpenAITTSService` can finish a context with **no audio**. The
+transport then never emits `BotStoppedSpeaking` (it requires received TTS audio).
+Application-owned speech units track purpose, generation, segment/answer index,
+and attempt number. Verified no-audio `ErrorFrame`s (TTS processor + pinned
+message) trigger one automatic retry of the same moderated text, then
+deterministic skip/exhaustion with a content-free UI `audio_warning`.
+
+Missing first-audio and missing-completion watchdogs use the same retry budget.
+Inferred completions are counted separately from verified segment completions.
+Resume remains **segment-level**.
+
+## Spoken navigation and classroom controls (Iteration 10.5)
+
+Clear commands are parsed locally after input safety and applied through
+`LessonController` / `PresentationRuntime` without RAG or the conversational LLM.
+
+| Kind | Examples | Effect |
+|------|----------|--------|
+| Navigation | “Let’s move to the next slide then, if possible”, “jump back to the previous slide”, “go to slide six” | Authoritative slide change once |
+| Question (not control) | “What is on slide 6?”, “Are we repeating this slide?” | Conversational LLM path |
+| Acknowledgement | “I got it”, “Yeah, I got that point” | Skip current/interrupted segment as `user_acknowledged` (not verified playback) |
+| Continuation | “Continue”, “Go ahead” | Resume interrupted segment (may briefly re-hear) |
+| Repeat | “Repeat this line”, “Say that again” | Replay exact moderated segment text |
+| Q&A completion | “That’s all from my end” | Closing message → `FINISHED` |
+
+Q&A wind-down defaults: `QA_SILENCE_TIMEOUT_SECONDS=12` per stage (invitation or
+post-answer follow-up → reminder → closing). Ambiguous replies such as
+“No, I would not like to know about a specific type” do not end the session.
+
 ## Why exact resume cannot be claimed
 
 The following APIs were inspected in the installed dependency versions

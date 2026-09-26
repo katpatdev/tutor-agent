@@ -13,6 +13,50 @@
       "change_summary": "Natural conversational speaking pace; concise spoken replies; slow only on student request"
     },
     {
+      "prompt_id": "tutor",
+      "version": "v2",
+      "status": "approved",
+      "relative_path": "tutor/v2.md",
+      "sha256": "06235f057d1b90f496c363976089943b32bfde7469403b4d8399e9be49106a60",
+      "created_at": "2026-09-26T00:00:00Z",
+      "approved": true,
+      "parent_version": "v1",
+      "change_summary": "Slide narration may cover curriculum in connected sentences; one-or-two-sentence brevity applies to Q&A answers only"
+    },
+    {
+      "prompt_id": "tutor",
+      "version": "v3",
+      "status": "approved",
+      "relative_path": "tutor/v3.md",
+      "sha256": "3b81f72ce72a3e9c899192f8ad0d3cf20c604fa485d317dadaacb2184ed42ee6",
+      "created_at": "2026-09-26T12:00:00Z",
+      "approved": true,
+      "parent_version": "v2",
+      "change_summary": "Interruption answers: two-to-four sentences on the exact question; avoid restating the whole slide; at most one follow-up invitation"
+    },
+    {
+      "prompt_id": "tutor",
+      "version": "v4",
+      "status": "approved",
+      "relative_path": "tutor/v4.md",
+      "sha256": "9618197f1318b231202e8b2391e89034e7fdd53d2250989a6143d7278a4029e3",
+      "created_at": "2026-09-26T14:00:00Z",
+      "approved": true,
+      "parent_version": "v3",
+      "change_summary": "Never claim slide moves; app owns post-answer follow-up invites; answer exact question only"
+    },
+    {
+      "prompt_id": "tutor",
+      "version": "v5",
+      "status": "approved",
+      "relative_path": "tutor/v5.md",
+      "sha256": "2dc904a859a16834742d15716a84dd4c1aa32576c1e1636df8ceea5c42980c06",
+      "created_at": "2026-09-26T15:00:00Z",
+      "approved": true,
+      "parent_version": "v4",
+      "change_summary": "Forbid filler follow-up phrases; app owns checkpoint and post-answer invites"
+    },
+    {
       "prompt_id": "judge_pedagogical",
       "version": "v1",
       "status": "approved",

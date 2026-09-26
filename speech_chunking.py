@@ -1,8 +1,10 @@
 """Pack moderated spoken text into TTS-friendly units.
 
 Short adjacent sentences are merged so OpenAI TTS does not pay a separate
-network round-trip per tiny phrase. NarrationPlan segments are unaffected —
-callers pack only already-moderated answer / Q&A text.
+network round-trip per tiny phrase. Answer / Q&A paths pack after output
+moderation. Slide narration packs at NarrationPlan segment boundaries
+(``narration_plan.segment_narration_text``) so resume identity stays aligned
+with TTS units.
 """
 
 from __future__ import annotations

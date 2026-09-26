@@ -39,6 +39,7 @@ export type LessonStateMessage = {
   can_navigate: boolean;
   safety_status: 'normal' | 'redirecting' | 'hold';
   safety_notice: string | null;
+  audio_warning?: string | null;
   narration?: NarrationProgress | null;
 };
 
@@ -155,6 +156,13 @@ export function parseServerMessage(raw: unknown): LessonServerMessage | null {
       return null;
     }
     if (!(raw.safety_notice === null || typeof raw.safety_notice === 'string')) {
+      return null;
+    }
+    if (
+      raw.audio_warning !== undefined &&
+      raw.audio_warning !== null &&
+      typeof raw.audio_warning !== 'string'
+    ) {
       return null;
     }
     if (raw.narration !== undefined && raw.narration !== null) {

@@ -357,9 +357,7 @@ class OutputSafetyProcessor(FrameProcessor):
             units = pack_spoken_units(text) if text else []
             if not units and text:
                 units = [text]
-            self._runtime.begin_moderated_answer_speech(len(units) if units else 1)
-            for unit in units:
-                await self.push_frame(TTSSpeakFrame(text=unit), direction)
+            await self._runtime.play_moderated_answer_units(units)
             return
 
         # Replace unsafe LLM output; do not push original text to TTS or assistant path.

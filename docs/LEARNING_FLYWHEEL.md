@@ -17,7 +17,7 @@ Student consent covers **local redacted storage**, not external transcript analy
 ## Prompt registry
 
 - Files under `prompts/` with `registry.json`
-- Active tutor prompt: `TUTOR_PROMPT_VERSION` (default `v1`)
+- Active tutor prompt: `TUTOR_PROMPT_VERSION` (default `v2`)
 - Runtime loads only **registered + approved** prompts; hash mismatch / missing file / path traversal fail startup
 - `data/prompt_candidates/` is ignored by runtime
 - Session metadata records `tutor_prompt_version` and `tutor_prompt_hash`

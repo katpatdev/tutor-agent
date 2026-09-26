@@ -1033,3 +1033,203 @@ Recorded after implementation (see final Cursor report for exact counts).
 - Exact playback-offset resume
 - Packaging
 
+---
+
+## Iteration 10.3 — Natural lesson narration and audio continuity
+
+Date: 2026-09-26
+
+### Pre-change diagnosis (code)
+
+1. **Thin slides 2–8:** Base tutor prompt required “one or two short sentences,” and that applied to slide narration LLM turns. Curriculum prompts were detailed but competed with brevity + accumulated prior slide system messages, so the model often emitted a single generic sentence.
+2. **Accumulated slide instructions:** `_begin_slide_narration` appended raw curriculum via `LLMMessagesAppendFrame` without stripping prior slides. Path: `PresentationRuntime._begin_slide_narration` → `_queue_system_messages` → context aggregator retains all prior `SLIDE N` system messages; assistant narration turns also remain. Result: later slides see many conflicting slide instructions.
+3. **Global brevity scope:** `prompts/tutor/v1.md` “Keep spoken responses concise, normally one or two short sentences” applied to every generation including narration.
+4. **Gap types:** Within-slide gaps between short NarrationPlan segments each require a new TTS request + `BotStopped` wait. Between-slide gaps require a new slide LLM generation + full output moderation before TTS. UI `Bot:` timestamps are not audible timing.
+5. **Duplicate Command ok:** (a) Frontend registered both `callbacks.onServerMessage` and `RTVIEvent.ServerMessage` → every outbound handled twice (`State` + `Ignored stale state sequence`). (b) `LessonLifecycleObserver` handled `InputTransportMessageFrame` on every pipeline hop; idempotent deduper **re-sent** the cached ACK each time → flood of identical `Command ok` for one `request_id`.
+6. **TTS no-audio:** Prior live sessions logged non-fatal TTS “context completed with no audio”; this particular UI log does not by itself prove a matching server recovery event.
+
+### Changes
+
+- Approved tutor prompt **v2**: Q&A stays concise; slide narration follows curriculum coverage when a temporary slide instruction is present.
+- `slide_narration_prompt.py`: marker-scoped instructions; strip prior slides before each turn; wrap curriculum with connected-speech guidance.
+- `narration_plan.segment_narration_text`: pack short adjacent sentences into bounded resume/TTS units (min~110, max~320).
+- Observer: handle each physical frame `id` once.
+- Frontend: single `onServerMessage` path.
+
+### Tests
+
+- `tests/test_narration_10_3.py` plus updated narration/presentation/flywheel assertions.
+
+### Offline validation
+
+- `uv run pytest tests/` — **202 passed**
+- `uv run python -m compileall -q .` — OK
+- `git diff --check` — clean
+- `uv run python -m eval_harness validate` — 21 cases OK
+- `uv run python -m eval_harness run-offline-fixtures` — 13 OK
+- Frontend: `yarn test` 30 passed; `yarn tsc --noEmit` OK; `yarn vite build` OK
+- No `/ws` or billable OpenAI calls in this iteration
+
+### Manual content review checklist (live; do not store student text)
+
+Compare spoken output to `curriculum.py` for each slide:
+
+1. Welcome/overview + questions welcome
+2. Definition + earthquakes/floods/hurricanes/volcanoes/droughts + natural processes
+3. Tectonic plates, weather, volcanoes, climate; sudden vs slow
+4. Categories: earthquakes, floods, cyclones, wildfires, landslides, eruptions
+5. People: injury/homes/displacement + healthcare/education disruption
+6. Environment: wildfire deforestation, habitat flooding, erosion, water pollution; landscape reshape
+7. Prep: warnings, evacuation, kits, awareness, education/planning
+8. Recap + preparedness/science/cooperation + invite questions
+
+Also note content-free timing impressions for segment-to-segment and slide-to-slide gaps where possible.
+
+### Deferred
+
+- Packaging / PDF / ZIP
+- Claiming live narration naturalness without user confirmation
+
+---
+
+## Iteration 10.4 — TTS failure recovery and deterministic voice navigation
+
+Date: 2026-09-26
+
+### Diagnosis (Pipecat 1.11.0)
+
+- Narration queues `TTSSpeakFrame` per segment; audible start = transport `BotStartedSpeaking` after `TTSAudioRawFrame`; complete = `BotStoppedSpeaking` only when `_tts_audio_received`.
+- Silent TTS contexts emit `ErrorFrame` via `TTSService._record_context_audio_outcome` with `processor=self` and message `TTS context {uuid} completed with no audio`.
+- Without audio, `BotStoppedSpeaking` never arrives → segment never advances → indefinite wait.
+- Slide-4 stall after cyclones: successful stop then ~43s with no next `Generating TTS` (lifecycle gap), distinct from no-audio freezes.
+- Packed answers share the same exposure per TTSSpeakFrame.
+
+### Changes
+
+- `tts_unit.py` / `presentation_tts_delivery.py`: owned speech units, one retry, start/completion watchdogs, consecutive-failure audio-error state, content-free metrics.
+- Observer handles `ErrorFrame` with TTS processor match (not broad “audio” matching).
+- `voice_navigation.py` + processor: deterministic next/prev/goto/repeat after input safety; no RAG/LLM.
+- Frontend shows `audio_warning` from lesson state.
+- Failed narration units skip without counting verified `segments_completed`; answers cannot remain stuck in `ANSWERING`.
+
+### Offline validation
+
+- `uv run pytest -q` — **211 passed**
+- `compileall` — OK
+- `eval_harness validate` / `run-offline-fixtures` — 21 cases / 13 fixtures OK
+- Frontend: `yarn test` 30 passed; `tsc` OK; `vite build` OK
+- `git diff --check` — clean after trailing-whitespace fix
+- No `/ws` or billable OpenAI calls
+- Preflight ports failed only because local services were running (expected before restart)
+
+### Deferred
+
+- Packaging
+- Claiming live TTS recovery without user retest
+
+
+---
+
+## Iteration 10.5 — Natural voice controls, repetition reduction, Q&A wind-down
+
+Date: 2026-09-26
+
+### Live diagnosis (post-10.4 session)
+
+- Slide 8 and Q&A were reached; narration content improved; TTS no-audio still occurred but did not permanently freeze.
+- Natural phrases such as “Let’s move to the next slide then, if possible” and “Can we jump back to the previous slide?” missed the fullmatch grammar → LLM promised a move while slide index stayed put, then interrupted narration resumed.
+- “Yeah, I got that point” and “Can you repeat this line?” reached the LLM and regenerated explanations instead of deterministic continue/ack/repeat.
+- Q&A stayed open after “that’s all from my end”; no deterministic closing.
+- UI log showed one Q&A answer text block; audible duplication was not proven from content-free TTS retry metrics.
+
+### Changes
+
+- `classroom_control.py`: deterministic local intents (navigation, acknowledge, continue, repeat, Q&A completion) with soft-strip of politeness / trailing fillers; question blocklist preserved.
+- Broadened voice navigation; processor routes all classroom controls before RAG/LLM.
+- Acknowledge advances past interrupted/current segment as `user_acknowledged` (not verified `segments_completed`); continue resumes segment; repeat replays exact moderated text with new speech-unit identity.
+- Q&A two-stage silence wind-down (`QA_SILENCE_TIMEOUT_SECONDS`, default 12s): reminder → closing → `FINISHED` after closing audio; explicit completion phrases skip to closing; ambiguous “no” does not end.
+- Tutor prompt **v3**: interruption/Q&A answers answer the exact question in two-to-four sentences; avoid restating the whole slide; at most one follow-up invitation.
+- TTS recovery: ErrorFrame + watchdog race suppression (`retry_races_suppressed`); audible units never retried as no-audio; new unit_id on retry.
+- Content-free metrics for nav, continues, acknowledgements, repeats, Q&A wind-down, sessions finished normally.
+
+### Offline validation
+
+- See Iteration 10.5 validation commands in the agent session report.
+- No packaging / commit / push.
+
+### Deferred
+
+- Packaging
+- Claiming live PASS until user confirms the 10.5 checklist
+
+
+---
+
+## Iteration 10.6 — Robust classroom commands, post-answer hold, bounded lesson context
+
+Date: 2026-09-26
+
+### Live diagnosis (post-10.5)
+
+- `go back to slide N`, chatter-prefixed next (`This is good. Can we…`), and ordinal-before-slide (`the eighth slide`) missed the parser → LLM falsely promised navigation while authoritative slide stayed put.
+- After interruption answers, `ANSWER_COMPLETED` immediately resumed narration even when the tutor had invited another question.
+- `LLMContext` retained chat turns but had no compact application-owned snapshot of visited slides, verified segments, pending resume, or return origin.
+
+### Changes
+
+- Broadened `classroom_control.py`: soft-strip + clause extraction; digits/cardinals/ordinals; absolute `go back to slide N`; suspected-control `CLARIFY` (no LLM false move); negation rejection; one-level `RETURN_ORIGIN`.
+- Navigation acknowledgements owned by application state (`Moving to slide 8.`, etc.); cancel obsolete TTS/plan; no RAG/LLM on matched controls.
+- Post-answer hold (`PostAnswerHoldStage` / `AWAITING_FOLLOWUP` behavior): invite once → wait (`LESSON_FOLLOWUP_WAIT_SECONDS`, default 12) → one reminder → stay waiting; continue / I got it / nav / new question / repeat / pause handled deterministically. Q&A wind-down unchanged.
+- One-level detour origin preserved until returned (first departure only).
+- `lesson_context.py` + retrieval injects bounded `<<<LESSON_CONTEXT>>>` before content LLM turns (no new OpenAI summarization call); strips prior snapshots to avoid duplication.
+- Tutor prompt **v4**: never claim slide moves; app owns follow-up invites.
+- Diagnostics: `classroom_control_matched|ambiguous|rejected_negation`, `post_answer_hold_*`, `lesson_detour_*`, `stale_callback_discarded`, context size.
+
+### Offline validation
+
+- `uv run pytest -q` — **295 passed**
+- Frontend: `yarn test` 30 passed; `yarn tsc --noEmit` OK; `yarn vite build` OK
+- `eval_harness validate` — 21 cases OK; `run-offline-fixtures` — 13 fixtures OK
+- Backend `:7860` and frontend `:5173` restarted for live retest
+- No packaging / commit / push
+
+### Deferred
+
+- Packaging / commit / push / release archive
+- Claiming live PASS until user confirms the 10.6 checklist
+
+
+---
+
+## Iteration 10.7 — Classroom checkpoints, natural controls, transitions, moderated prefetch
+
+Date: 2026-09-26
+
+### Pre-change diagnosis
+
+- Soft-strip omitted `as`/`because`/`since` tails → clear skip/goto became `CLARIFY`.
+- `_EXTRACT_FROM_CHATTER` allowed bare `slide N` → “question from slide seven” became GOTO.
+- `CONTINUE` lacked “you can continue” / “move on” / “resume” variants → LLM re-explained or silence.
+- `SLIDE_COMPLETED` always auto-advanced; no instructional checkpoint on slides 2–7.
+- Narration generated only on arrival via live `LLMContext`; no moderated text/plan cache.
+
+### Changes
+
+- Parser: trailing-reason strip; question-reference / stay / preamble intents; expanded continue; no bare-slide extract without movement verb.
+- Runtime: slide-1 auto transition to slide 2; slides 2–7 `SlideCheckpointStage`; context-specific post-answer invites; curriculum-title transitions; continue resolves resume vs advance.
+- `narration_prefetch.py`: session-scoped sequential moderated text+plan cache; separate OpenAI messages (not live LLMContext); prioritize jumps; cancel on disconnect.
+- Tutor prompt **v5**; agent wires prefetch at `prepare_and_start_session`.
+
+### Offline validation
+
+- `uv run pytest -q` — **334 passed**
+- `compileall` — OK
+- Frontend: `yarn test` 30 passed; `tsc` OK; `vite build` OK
+- `eval_harness validate` / `run-offline-fixtures` — 21 cases / 13 fixtures OK
+- Backend `:7860` and frontend `:5173` restarted for live retest
+- No packaging / commit / push
+
+### Deferred
+
+- Packaging / commit / push / release archive
+- Claiming live PASS until user confirms the 10.7 checklist

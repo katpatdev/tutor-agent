@@ -106,6 +106,7 @@ def build_state_message(
     safety_status: str = "normal",
     safety_notice: Optional[str] = None,
     narration: Optional[Dict[str, Any]] = None,
+    audio_warning: Optional[str] = None,
 ) -> Dict[str, Any]:
     index = state.cursor.slide_index
     flags = control_availability(state, safety_status=safety_status)
@@ -127,6 +128,8 @@ def build_state_message(
         "safety_status": safety_status,
         "safety_notice": safety_notice,
     }
+    if audio_warning:
+        message["audio_warning"] = audio_warning
     if narration is not None:
         message["narration"] = narration
     return message
@@ -354,6 +357,7 @@ class LessonProtocolSession:
             safety_status=self._runtime.safety_status.value,
             safety_notice=self._runtime.safety_notice,
             narration=narration,
+            audio_warning=getattr(self._runtime, "audio_warning", None),
         )
         await self._send_outbound(wrap_rtvi_server_message(message))
         return message

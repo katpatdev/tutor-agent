@@ -92,6 +92,26 @@ See `docs/RESUME_ACCURACY.md` and `docs/LIVE_TEST_PLAN.md`.
 Exact browser playback offsets are unavailable. The supported and reported
 resume accuracy is **segment-level**, never exact word/audio-byte resume.
 
+Slide system instructions are temporary and marker-scoped: prior slide
+instructions are stripped before each new slide turn so only the current
+curriculum instruction controls narration (Iteration 10.3). The base tutor
+prompt’s brief Q&A guidance (tutor v3: normally two to four sentences on the
+exact question) applies to interruption and open Q&A answers; slide turns use
+connected curriculum coverage.
+
+TTS units are application-owned (Iteration 10.4). Silent OpenAI TTS contexts
+are detected via Pipecat `ErrorFrame` from the TTS processor, retried once,
+then skipped with a content-free `audio_warning`. Late ErrorFrame/watchdog races
+are idempotent (Iteration 10.5).
+
+Deterministic classroom controls (Iteration 10.5) run after input safety and
+before RAG/LLM: navigation, acknowledgement (“I got it”), continuation,
+segment repeat, and Q&A completion. Natural navigation phrases tolerate
+politeness and trailing fillers; informational questions about slides do not
+navigate. After slide 8, Q&A uses a two-stage silence wind-down (reminder, then
+closing message) before `FINISHED`, or an explicit completion phrase skips to
+closing. Closing audio must finish (or exhaust TTS recovery) before the session ends.
+
 ## Protocol envelopes (version 1)
 
 - `lesson.command` — client→server (`pause` | `resume` | `goto_slide` | `get_state`)
@@ -137,4 +157,4 @@ Connect/Disconnect, Pause/Resume, slide selector (1–8) + Go to Slide, `aria-li
 - In-memory RAG only (lost on restart; not multi-worker)
 - Local SQLite session store is demo-grade (not multi-tenant auth)
 - Output TTS waits for full LLM response + moderation (latency tradeoff)
-- **LIVE OPENAI VALIDATION NOT RUN**; real audio quality and control timing remain unverified
+- Manual live confirmation still required for narration naturalness, interruption races, RAG, consent, and safety scenarios without their own PASS results

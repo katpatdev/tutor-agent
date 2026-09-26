@@ -20,6 +20,7 @@ from presentation_runtime import (
     PresentationRuntime,
     RecordingFrameSink,
     make_test_append_frame,
+    make_test_transform_frame,
     make_test_interruption_frame,
 )
 from session_metrics import SessionMetricsCollector
@@ -52,7 +53,9 @@ def make_runtime(
         frame_sink=sink,
         interruption_frame_factory=make_test_interruption_frame,
         messages_append_frame_factory=make_test_append_frame,
+        messages_transform_frame_factory=make_test_transform_frame,
         narration_max_characters=max_characters,
+        narration_min_characters=1,
         no_answer_timeout_seconds=no_answer_timeout_seconds,
     )
     runtime.set_tts_speak_frame_factory(FakeTTSSpeakFrame)
@@ -97,6 +100,11 @@ def test_a_answer_lifecycle_returns_from_answering() -> None:
         await runtime.on_bot_stopped_speaking()
         assert runtime.state.mode is LessonMode.PRESENTING
         assert runtime.state.cursor.slide_index == slide
+        assert runtime.output_purpose is OutputPurpose.POST_ANSWER_INVITE
+        await runtime.on_bot_started_speaking()
+        await runtime.on_bot_stopped_speaking()
+        from classroom_control import parse_classroom_control
+        assert await runtime.handle_classroom_control(parse_classroom_control("Continue."))
         assert runtime.output_purpose is OutputPurpose.RESUMED_NARRATION
         assert runtime.narration_plan is not None
         assert runtime.narration_plan.active_segment_index == segment
@@ -126,8 +134,13 @@ def test_b_cancelled_answer_completion_cannot_advance_or_duplicate() -> None:
         await runtime.on_bot_stopped_speaking()
         assert runtime.state.mode is LessonMode.PRESENTING
         assert runtime.state.cursor.slide_index == 0
-        # Exactly one segment replay queued after answer; no slide skip.
-        assert sink.tts_texts[len(before) :] == ["Alpha sentence."]
+        assert runtime.output_purpose is OutputPurpose.POST_ANSWER_INVITE
+        await runtime.on_bot_started_speaking()
+        await runtime.on_bot_stopped_speaking()
+        from classroom_control import parse_classroom_control
+        assert await runtime.handle_classroom_control(parse_classroom_control("Continue."))
+        # Exactly one segment replay queued after continue; no slide skip.
+        assert sink.tts_texts[len(before) :][-1] == "Alpha sentence."
 
     asyncio.run(_run())
 
@@ -255,6 +268,11 @@ def test_g_slide_progression_after_interruption_answer() -> None:
         await runtime.on_bot_stopped_speaking()
         assert runtime.state.mode is LessonMode.PRESENTING
         assert runtime.state.cursor.slide_index == 0
+        assert runtime.output_purpose is OutputPurpose.POST_ANSWER_INVITE
+        await runtime.on_bot_started_speaking()
+        await runtime.on_bot_stopped_speaking()
+        from classroom_control import parse_classroom_control
+        assert await runtime.handle_classroom_control(parse_classroom_control("Continue."))
         # Finish resumed segment → advance to next slide.
         await runtime.on_bot_started_speaking()
         await runtime.on_bot_stopped_speaking()

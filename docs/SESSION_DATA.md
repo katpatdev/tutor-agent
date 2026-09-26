@@ -13,6 +13,10 @@ Per WebSocket session (in memory always; optionally persisted):
 - Content-free narration plan/segment counts, interruptions, replays,
   stale/cancelled completions, errors, average segment characters, and
   `resume_accuracy` (`segment`)
+- Content-free TTS delivery counters (units queued, no-audio, retries,
+  races suppressed, inferred completions) and classroom-control counters
+  (voice nav, continues, user-acknowledged segments, repeats, Q&A
+  reminders/closes, sessions finished normally)
 - Whether a redacted transcript was saved
 
 Monetary OpenAI cost is **not** calculated.

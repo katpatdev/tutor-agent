@@ -200,7 +200,12 @@ class WebsocketClientApp {
       this.slideSelect.value = String(state.slide.number);
     }
     if (this.safetyNotice) {
-      this.safetyNotice.textContent = state.safety_notice || '';
+      const safety = state.safety_notice || '';
+      const audio = state.audio_warning || '';
+      this.safetyNotice.textContent = [safety, audio].filter(Boolean).join(' ');
+      if (audio) {
+        this.log(`Audio warning: ${audio}`);
+      }
     }
     if (this.narrationStatusEl) {
       this.narrationStatusEl.textContent = formatNarrationStatus(state.narration);
@@ -507,10 +512,8 @@ class WebsocketClientApp {
         `Track stopped: ${track.kind} from ${participant?.name || 'unknown'}`
       );
     });
-
-    this.pcClient.on(RTVIEvent.ServerMessage, (data) => {
-      this.handleServerPayload(data);
-    });
+    // Server messages are handled only via callbacks.onServerMessage to avoid
+    // duplicate State / Command-ok processing for a single outbound payload.
   }
 
   private setupAudioTrack(track: MediaStreamTrack): void {

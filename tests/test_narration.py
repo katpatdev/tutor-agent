@@ -28,9 +28,11 @@ from presentation_runtime import (
     PresentationRuntime,
     RecordingFrameSink,
     make_test_append_frame,
+    make_test_transform_frame,
     make_test_interruption_frame,
 )
 from session_metrics import SessionMetricsCollector
+from slide_narration_prompt import is_slide_narration_instruction
 
 
 @dataclass
@@ -50,7 +52,9 @@ def make_runtime(
         frame_sink=sink,
         interruption_frame_factory=make_test_interruption_frame,
         messages_append_frame_factory=make_test_append_frame,
+        messages_transform_frame_factory=make_test_transform_frame,
         narration_max_characters=max_characters,
+        narration_min_characters=1,
     )
     runtime.set_tts_speak_frame_factory(FakeTTSSpeakFrame)
     return runtime, sink
@@ -104,6 +108,7 @@ def test_plan_lifecycle_defaults_and_public_progress_have_no_text() -> None:
         slide_index=3,
         text="First section. Second section.",
         max_characters=40,
+        min_characters=1,
     )
     progress = plan.progress().to_public_dict()
 
@@ -208,8 +213,14 @@ def test_interruption_answer_resumes_same_segment_without_advancing_slide() -> N
 
         assert runtime.state.mode is LessonMode.PRESENTING
         assert runtime.state.cursor.slide_index == 0
+        assert runtime.output_purpose is OutputPurpose.POST_ANSWER_INVITE
+        await runtime.on_bot_started_speaking()
+        await runtime.on_bot_stopped_speaking()
+        from classroom_control import parse_classroom_control
+        assert await runtime.handle_classroom_control(parse_classroom_control("Continue."))
         assert runtime.output_purpose is OutputPurpose.RESUMED_NARRATION
-        assert sink.tts_texts == ["First section.", "First section."]
+        assert sink.tts_texts[0] == "First section."
+        assert sink.tts_texts[-1] == "First section."
         assert runtime.segment_replays == 1
 
     asyncio.run(_run())
@@ -227,7 +238,8 @@ def test_navigation_invalidates_old_generation_and_suppresses_cancelled_stop() -
         assert old_plan is not None and old_plan.invalidated
         assert runtime.narration_plan is None
         assert runtime.state.cursor.slide_index == 1
-        assert sink.system_messages[-1] == "SLIDE 1"
+        assert is_slide_narration_instruction(sink.system_messages[-1])
+        assert "SLIDE 1" in sink.system_messages[-1]
 
         await runtime.on_bot_stopped_speaking()
         assert runtime.state.cursor.slide_index == 1
@@ -243,13 +255,25 @@ def test_final_slide_enters_qa_only_after_final_narration_segment() -> None:
     async def _run() -> None:
         runtime, sink = make_runtime(slide_count=1)
         await runtime.start_session()
-        await runtime.accept_approved_narration("Final first. Final second.")
+        # Force two segments under max=40 packing bounds.
+        await runtime.accept_approved_narration(
+            "Final first sentence is long enough alone. "
+            "Final second sentence is also long enough."
+        )
+        assert runtime.narration_plan is not None
+        assert runtime.narration_plan.total_segments >= 2
 
         await complete_active_segment(runtime)
         assert runtime.state.mode is LessonMode.PRESENTING
         assert runtime.output_purpose is OutputPurpose.SLIDE_NARRATION
 
-        await complete_active_segment(runtime)
+        while (
+            runtime.narration_plan is not None
+            and not runtime.narration_plan.is_complete
+            and runtime.state.mode is LessonMode.PRESENTING
+        ):
+            await complete_active_segment(runtime)
+
         assert runtime.state.mode is LessonMode.QA_MODE
         assert runtime.output_purpose is OutputPurpose.QA_TRANSITION
         assert sum("open Q&A" in message for message in sink.system_messages) == 1
@@ -331,7 +355,10 @@ def test_health_endpoints_are_offline_and_use_temporary_session_db(
 
 
 def test_question_mark_and_decimal_segmentation() -> None:
-    segs = segment_narration_text("Is 2.5 larger? Yes it is.")
+    segs = segment_narration_text(
+        "Is 2.5 larger? Yes it is.",
+        min_characters=1,
+    )
     assert len(segs) >= 2
     joined = " ".join(s.text for s in segs)
     assert "2.5" in joined

@@ -62,28 +62,109 @@ Content-free session end state (approximate):
 
 Observed stuck again after slide 6 interruption (`final_lesson_mode=ANSWERING`, `answers` never completed). Root cause refined: generic `_suppress_next_bot_stopped` set on pre-audio interrupt consumed the answer's legitimate `BotStoppedSpeaking`. Consent was `false` this session. Sentence gaps traced to Pipecat OpenAI TTS **sentence aggregation** (one API call per short sentence).
 
-## Live run 3 — Iteration 10.2 retest
+## Live run 3 — Iteration 10.2 path (user report) / pre–10.3
 
-**NOT RUN.** Offline fixes prepared; awaiting manual confirmation.
+**Partial live session (UI evidence).** The user reported reaching **slide 8** and entering **Q&A**. Q&A answers were informative and sounded reasonably continuous. Slide narration quality was **unacceptable**: slide 1 had several short spoken sections with gaps; slides 2–8 often sounded like one generic sentence each with repetitive “Natural disasters…” openings; curriculum points were under-covered.
+
+Distinction:
+
+| Source | What it supports |
+|--------|------------------|
+| UI log (`Bot:` text events, lesson state lines) | Text/event sequencing and mode transitions; **not** precise audible gap timing |
+| User audio perception | Within-slide choppiness and thin slide content |
+| Server events in this log | Not a complete server-side TTS “no audio” evidence set for this particular run |
+
+### Scenario status (run 3)
+
+| Scenario | Status | Notes |
+|----------|--------|-------|
+| Slide progression to 8 | **PASS (UI)** | Reached slide 8 |
+| Slide 8 → Q&A | **PASS (UI)** | Entered Q&A |
+| Q&A answer quality | **PASS (user)** | Liked continuity/content |
+| Narration curriculum coverage | **FAIL** | Thin / repetitive; Iteration 10.3 targets this |
+| Within-slide continuity | **FAIL** | Gaps / short bursts |
+| Interruption / RAG / consent / safety | **NOT CONFIRMED** | Do not mark PASS without dedicated results |
+
+## Live run 4 — Iteration 10.3 narration retest (user report)
+
+**Partial live session with matching server log.** Narration content improved (connected explanations, fewer repetitive openings). Interruption detection, answer quality/speed, and Q&A style were satisfactory to the user.
+
+Remaining failures (verified against server log):
+
+- Multiple `OpenAITTSService … completed with no audio` ErrorFrames
+- UI showed approved `Bot:` text while audio was missing or incomplete
+- Lesson stalled waiting for audible BotStopped that never arrived
+- Speaking again unstuck the session but replayed interrupted segments
+- Spoken “go to slide 6” / “next slide” was answered by the LLM only; slide index did not change
+
+## Live run 5 — Iteration 10.4 / pre-10.5 live session (2026-09-26)
+
+**Partial PASS with remaining defects (user UI log + server evidence).**
+
+| Area | Result | Notes |
+|------|--------|-------|
+| Connection | PASS | localhost:7860 |
+| Reached slide 8 → Q&A | PASS | |
+| Narration content | IMPROVED | Connected explanations |
+| No permanent TTS freeze | PASS | no-audio ErrorFrames still occurred; recovery prevented permanent freeze |
+| Natural voice nav (“then, if possible”, “jump back”) | FAIL | Fullmatch grammar miss → LLM promise without slide change |
+| Acknowledgements / “repeat this line” | FAIL | Re-taught via LLM |
+| Q&A end after “that’s all” | FAIL | Stayed in QA_MODE until disconnect |
+| Q&A text duplicated in UI log | NOT OBSERVED | Single generated answer in transcript |
+| Audible answer duplication | UNVERIFIED | Pending TTS retry correlation; not proven from UI lines alone |
+
+## Live run 6 — Iteration 10.5 retest
+
+**NOT RUN.** Offline classroom-control + Q&A wind-down prepared; awaiting manual microphone confirmation.
+
+### Checklist (blank until user confirms)
 
 ```text
-Pre-audio interruption recovery: PASS/FAIL
-Mid-narration interruption recovery: PASS/FAIL
-Returned from ANSWERING: PASS/FAIL
-Sentence gaps: PASS/FAIL
-Speech naturalness: PASS/FAIL
-Slide progression: PASS/FAIL
+Connection: PASS/FAIL
+Narration content: PASS/FAIL
+No permanent TTS freeze: PASS/FAIL
+
+“I got it” avoids re-explanation: PASS/FAIL
+“Repeat this line” replays only the segment: PASS/FAIL
+“Continue” resumes correctly: PASS/FAIL
+
+“Let’s move to the next slide then, if possible”: PASS/FAIL
+“Can we jump back to the previous slide?”: PASS/FAIL
+“Go to slide six”: PASS/FAIL
+“What is on slide six?” does not navigate: PASS/FAIL
+
+Interruption answer quality unchanged: PASS/FAIL
+Return to narration: PASS/FAIL
+No unintended repeated answer audio: PASS/FAIL
+
 Slide 8 → Q&A: PASS/FAIL
-Q&A: PASS/FAIL
+First Q&A silence reminder: PASS/FAIL
+Speaking after reminder cancels closing: PASS/FAIL
+“That’s all from my end” closes politely: PASS/FAIL
+Ambiguous “No, not that type” keeps Q&A open: PASS/FAIL
+Automatic silence closing: PASS/FAIL
+Session finishes once: PASS/FAIL
 
-RAG empty-store behavior: PASS/FAIL
-RAG document retrieval: PASS/FAIL
-RAG source attribution: PASS/FAIL
-RAG unrelated-query behavior: PASS/FAIL
+Notes:
+```
 
-Consent display: PASS/FAIL
-
-Approx first-answer delay:
-Approx sentence gap:
+```text
+Connection: PASS/FAIL
+All slide content audible: PASS/FAIL
+No unexplained long silence: PASS/FAIL
+Automatic TTS retry observed: PASS/FAIL/NOT OBSERVED
+Lesson recovered without speaking: PASS/FAIL/NOT TESTED
+No duplicated segment after recovery: PASS/FAIL
+Interruption stops narration: PASS/FAIL
+Answer quality unchanged: PASS/FAIL
+Return to narration: PASS/FAIL
+“Next slide” navigation: PASS/FAIL
+“Go to slide 6” navigation: PASS/FAIL
+“Previous slide” navigation: PASS/FAIL
+Pause/Resume: PASS/FAIL
+Slide 8 → Q&A: PASS/FAIL
+Q&A response: PASS/FAIL
+Audio warning shown on exhausted failure: PASS/FAIL/NOT OBSERVED
+Approximate longest unexplained silence:
 Notes:
 ```

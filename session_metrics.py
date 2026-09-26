@@ -130,6 +130,113 @@ class SessionMetricsCollector:
     narration_resume_accuracy: str = "segment"
     answer_lifecycle_stages: dict = field(default_factory=dict)
     no_answer_continuations: int = 0
+    tts_units_queued: int = 0
+    tts_no_audio_failures: int = 0
+    tts_first_audio_timeouts: int = 0
+    tts_completion_timeouts: int = 0
+    tts_retry_attempts: int = 0
+    tts_retry_successes: int = 0
+    tts_retry_exhaustion: int = 0
+    tts_failed_narration_units: int = 0
+    tts_failed_answer_units: int = 0
+    tts_stale_failures_ignored: int = 0
+    tts_inferred_completions: int = 0
+    tts_retry_races_suppressed: int = 0
+    voice_nav_commands: int = 0
+    voice_nav_rejections: int = 0
+    deterministic_continues: int = 0
+    user_acknowledged_segments: int = 0
+    deterministic_repeats: int = 0
+    qa_reminders: int = 0
+    qa_explicit_closes: int = 0
+    qa_silence_closes: int = 0
+    qa_closing_failures: int = 0
+    sessions_finished_normally: int = 0
+    control_intents_ambiguous: int = 0
+    post_answer_holds: int = 0
+    post_answer_reminders: int = 0
+    post_answer_hold_exits: int = 0
+    lesson_detours_created: int = 0
+    lesson_detours_returned: int = 0
+    classroom_control_matched: int = 0
+    classroom_control_ambiguous: int = 0
+    classroom_control_rejected_negation: int = 0
+    stale_callbacks_discarded: int = 0
+    lesson_context_injections: int = 0
+    lesson_context_chars: int = 0
+
+    def note_tts_delivery_snapshot(
+        self,
+        *,
+        units_queued: int = 0,
+        no_audio_failures: int = 0,
+        first_audio_timeouts: int = 0,
+        completion_timeouts: int = 0,
+        retry_attempts: int = 0,
+        retry_successes: int = 0,
+        retry_exhaustion: int = 0,
+        failed_narration_units: int = 0,
+        failed_answer_units: int = 0,
+        stale_failures_ignored: int = 0,
+        inferred_completions: int = 0,
+        retry_races_suppressed: int = 0,
+        voice_nav_commands: int = 0,
+        voice_nav_rejections: int = 0,
+        deterministic_continues: int = 0,
+        user_acknowledged_segments: int = 0,
+        deterministic_repeats: int = 0,
+        qa_reminders: int = 0,
+        qa_explicit_closes: int = 0,
+        qa_silence_closes: int = 0,
+        qa_closing_failures: int = 0,
+        sessions_finished_normally: int = 0,
+        control_intents_ambiguous: int = 0,
+        post_answer_holds: int = 0,
+        post_answer_reminders: int = 0,
+        post_answer_hold_exits: int = 0,
+        lesson_detours_created: int = 0,
+        lesson_detours_returned: int = 0,
+        classroom_control_matched: int = 0,
+        classroom_control_ambiguous: int = 0,
+        classroom_control_rejected_negation: int = 0,
+        stale_callbacks_discarded: int = 0,
+        lesson_context_injections: int = 0,
+        lesson_context_chars: int = 0,
+    ) -> None:
+        self.tts_units_queued = units_queued
+        self.tts_no_audio_failures = no_audio_failures
+        self.tts_first_audio_timeouts = first_audio_timeouts
+        self.tts_completion_timeouts = completion_timeouts
+        self.tts_retry_attempts = retry_attempts
+        self.tts_retry_successes = retry_successes
+        self.tts_retry_exhaustion = retry_exhaustion
+        self.tts_failed_narration_units = failed_narration_units
+        self.tts_failed_answer_units = failed_answer_units
+        self.tts_stale_failures_ignored = stale_failures_ignored
+        self.tts_inferred_completions = inferred_completions
+        self.tts_retry_races_suppressed = retry_races_suppressed
+        self.voice_nav_commands = voice_nav_commands
+        self.voice_nav_rejections = voice_nav_rejections
+        self.deterministic_continues = deterministic_continues
+        self.user_acknowledged_segments = user_acknowledged_segments
+        self.deterministic_repeats = deterministic_repeats
+        self.qa_reminders = qa_reminders
+        self.qa_explicit_closes = qa_explicit_closes
+        self.qa_silence_closes = qa_silence_closes
+        self.qa_closing_failures = qa_closing_failures
+        self.sessions_finished_normally = sessions_finished_normally
+        self.control_intents_ambiguous = control_intents_ambiguous
+        self.post_answer_holds = post_answer_holds
+        self.post_answer_reminders = post_answer_reminders
+        self.post_answer_hold_exits = post_answer_hold_exits
+        self.lesson_detours_created = lesson_detours_created
+        self.lesson_detours_returned = lesson_detours_returned
+        self.classroom_control_matched = classroom_control_matched
+        self.classroom_control_ambiguous = classroom_control_ambiguous
+        self.classroom_control_rejected_negation = classroom_control_rejected_negation
+        self.stale_callbacks_discarded = stale_callbacks_discarded
+        self.lesson_context_injections = lesson_context_injections
+        self.lesson_context_chars = lesson_context_chars
 
     def note_narration_snapshot(
         self,
@@ -365,6 +472,40 @@ class SessionMetricsCollector:
                 else 0.0
             ),
             "narration_resume_accuracy": self.narration_resume_accuracy,
+            "tts_units_queued": self.tts_units_queued,
+            "tts_no_audio_failures": self.tts_no_audio_failures,
+            "tts_first_audio_timeouts": self.tts_first_audio_timeouts,
+            "tts_completion_timeouts": self.tts_completion_timeouts,
+            "tts_retry_attempts": self.tts_retry_attempts,
+            "tts_retry_successes": self.tts_retry_successes,
+            "tts_retry_exhaustion": self.tts_retry_exhaustion,
+            "tts_failed_narration_units": self.tts_failed_narration_units,
+            "tts_failed_answer_units": self.tts_failed_answer_units,
+            "tts_stale_failures_ignored": self.tts_stale_failures_ignored,
+            "tts_inferred_completions": self.tts_inferred_completions,
+            "tts_retry_races_suppressed": self.tts_retry_races_suppressed,
+            "voice_nav_commands": self.voice_nav_commands,
+            "voice_nav_rejections": self.voice_nav_rejections,
+            "deterministic_continues": self.deterministic_continues,
+            "user_acknowledged_segments": self.user_acknowledged_segments,
+            "deterministic_repeats": self.deterministic_repeats,
+            "qa_reminders": self.qa_reminders,
+            "qa_explicit_closes": self.qa_explicit_closes,
+            "qa_silence_closes": self.qa_silence_closes,
+            "qa_closing_failures": self.qa_closing_failures,
+            "sessions_finished_normally": self.sessions_finished_normally,
+            "control_intents_ambiguous": self.control_intents_ambiguous,
+            "post_answer_holds": self.post_answer_holds,
+            "post_answer_reminders": self.post_answer_reminders,
+            "post_answer_hold_exits": self.post_answer_hold_exits,
+            "lesson_detours_created": self.lesson_detours_created,
+            "lesson_detours_returned": self.lesson_detours_returned,
+            "classroom_control_matched": self.classroom_control_matched,
+            "classroom_control_ambiguous": self.classroom_control_ambiguous,
+            "classroom_control_rejected_negation": self.classroom_control_rejected_negation,
+            "stale_callbacks_discarded": self.stale_callbacks_discarded,
+            "lesson_context_injections": self.lesson_context_injections,
+            "lesson_context_chars": self.lesson_context_chars,
         }
 
     def print_disconnect_report(self) -> None:

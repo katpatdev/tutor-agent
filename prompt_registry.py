@@ -149,7 +149,7 @@ def load_active_tutor_prompt(
     prompts_root: Optional[Path] = None,
 ) -> LoadedPrompt:
     env = environ if environ is not None else os.environ
-    version = (env.get("TUTOR_PROMPT_VERSION") or "v1").strip()
+    version = (env.get("TUTOR_PROMPT_VERSION") or "v5").strip()
     if not _VERSION_RE.match(version):
         raise PromptRegistryError(f"invalid TUTOR_PROMPT_VERSION: {version!r}")
     return load_prompt("tutor", version, prompts_root=prompts_root, require_approved=True)

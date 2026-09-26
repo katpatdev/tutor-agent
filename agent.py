@@ -16,6 +16,7 @@ from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import (
     BotStartedSpeakingFrame,
     BotStoppedSpeakingFrame,
+    ErrorFrame,
     InputTransportMessageFrame,
     MetricsFrame,
     OutputTransportMessageUrgentFrame,
@@ -39,11 +40,13 @@ from pipecat.transports.websocket.fastapi import (
     FastAPIWebsocketTransport,
 )
 
-from curriculum import slide_prompts
+from curriculum import slide_prompts, TOTAL_SLIDES
+from voice_navigation_processor import VoiceNavigationProcessor
 from embedding_service import OpenAIEmbeddingClient, load_rag_config
 from knowledge_store import SHARED_KNOWLEDGE_STORE
 from lesson_protocol import LessonProtocolSession
 from moderation_service import OpenAIModerationClient, load_safety_config
+from narration_prefetch import NarrationPrefetchCache
 from presentation_runtime import (
     ACTIVE_TUTOR_PROMPT_HASH,
     ACTIVE_TUTOR_PROMPT_VERSION,
@@ -51,6 +54,7 @@ from presentation_runtime import (
     TTS_INSTRUCTIONS,
     PresentationRuntime,
 )
+from safety_policy import SafetyDecision, SafetySource, evaluate_moderation
 from narration_plan import load_narration_max_characters
 from retrieval_processor import RetrievalProcessor, SessionRetrievalState
 from safety_processors import InputSafetyProcessor, OutputSafetyProcessor
@@ -58,7 +62,9 @@ from session_config import load_session_data_config
 from session_observability import SessionObservability
 from session_store import CURRICULUM_VERSION, SessionStore, SessionStoreError
 from voice_runtime_config import (
+    load_lesson_followup_wait_seconds,
     load_no_answer_timeout_seconds,
+    load_qa_silence_timeout_seconds,
     load_tts_speech_speed,
     load_vad_runtime_config,
 )
@@ -71,6 +77,8 @@ RAG_CONFIG = load_rag_config()
 SESSION_DATA_CONFIG = load_session_data_config()
 NARRATION_MAX_CHARACTERS = load_narration_max_characters()
 NO_ANSWER_TIMEOUT_SECONDS = load_no_answer_timeout_seconds()
+QA_SILENCE_TIMEOUT_SECONDS = load_qa_silence_timeout_seconds()
+LESSON_FOLLOWUP_WAIT_SECONDS = load_lesson_followup_wait_seconds()
 TTS_SPEECH_SPEED = load_tts_speech_speed()
 VAD_RUNTIME = load_vad_runtime_config()
 
@@ -91,23 +99,63 @@ except Exception:  # noqa: BLE001
 
 
 class LessonLifecycleObserver(BaseObserver):
-    """Forwards speaking lifecycle, metrics, and inbound transport messages."""
+    """Forwards speaking lifecycle, metrics, and inbound transport messages.
+
+    Pipecat notifies observers on every pipeline hop, so the same physical
+    frame can appear many times. Handlers run once per frame identity.
+    """
 
     def __init__(
         self,
         runtime: PresentationRuntime,
         protocol: LessonProtocolSession,
         observability: SessionObservability,
+        *,
+        tts_processor=None,
     ):
         super().__init__()
         self._runtime = runtime
         self._protocol = protocol
         self._observability = observability
+        self._tts_processor = tts_processor
+        self._seen_frame_ids: set[int] = set()
+        self._seen_frame_order: list[int] = []
+        self._seen_frame_limit = 4096
+
+    def _mark_seen(self, frame_id: int) -> bool:
+        """Return True if this frame id is newly seen (should be handled)."""
+        if frame_id in self._seen_frame_ids:
+            return False
+        self._seen_frame_ids.add(frame_id)
+        self._seen_frame_order.append(frame_id)
+        if len(self._seen_frame_order) > self._seen_frame_limit:
+            old = self._seen_frame_order.pop(0)
+            self._seen_frame_ids.discard(old)
+        return True
 
     async def on_push_frame(self, data: FramePushed):
         frame = data.frame
         if isinstance(frame, MetricsFrame):
             self._observability.collector.ingest_metrics_frame(frame)
+            return
+        if isinstance(frame, ErrorFrame):
+            if not self._mark_seen(id(frame)):
+                return
+            await self._runtime.on_tts_error_frame(
+                frame, tts_processor=self._tts_processor
+            )
+            return
+        if not isinstance(
+            frame,
+            (
+                BotStartedSpeakingFrame,
+                BotStoppedSpeakingFrame,
+                UserStartedSpeakingFrame,
+                InputTransportMessageFrame,
+            ),
+        ):
+            return
+        if not self._mark_seen(id(frame)):
             return
         if isinstance(frame, BotStartedSpeakingFrame):
             await self._runtime.on_bot_started_speaking()
@@ -187,6 +235,8 @@ async def run_bot(websocket_client):
         frame_sink=_TaskFrameSink(),
         narration_max_characters=NARRATION_MAX_CHARACTERS,
         no_answer_timeout_seconds=NO_ANSWER_TIMEOUT_SECONDS,
+        qa_silence_timeout_seconds=QA_SILENCE_TIMEOUT_SECONDS,
+        lesson_followup_wait_seconds=LESSON_FOLLOWUP_WAIT_SECONDS,
     )
     runtime.set_observability(observability)
 
@@ -195,6 +245,62 @@ async def run_bot(websocket_client):
         model=SAFETY_CONFIG.moderation_model,
         timeout_seconds=SAFETY_CONFIG.timeout_seconds,
     )
+
+    from openai import AsyncOpenAI
+
+    prefetch_client = AsyncOpenAI(api_key=api_key)
+
+    async def _prefetch_generate(slide_index: int, instruction: str) -> str:
+        # Separate bounded context — never the live conversational LLMContext.
+        messages = [
+            {"role": "system", "content": BASE_TUTOR_PROMPT},
+            {"role": "system", "content": instruction},
+            {
+                "role": "user",
+                "content": (
+                    f"Narrate slide {slide_index + 1} now using only the "
+                    "curriculum instruction above."
+                ),
+            },
+        ]
+        resp = await prefetch_client.chat.completions.create(
+            model="gpt-4o",
+            messages=messages,
+            temperature=0.4,
+        )
+        choice = resp.choices[0].message.content if resp.choices else ""
+        return (choice or "").strip()
+
+    async def _prefetch_moderate(text: str) -> str:
+        cleaned = (text or "").strip()
+        if not cleaned:
+            return ""
+        result = await moderation_client.moderate(cleaned)
+        decision = evaluate_moderation(
+            result, source=SafetySource.ASSISTANT_OUTPUT
+        )
+        if decision.decision is not SafetyDecision.ALLOW:
+            return ""
+        return cleaned
+
+    def _prefetch_event(event: str, fields: dict) -> None:
+        try:
+            observability.collector.note_answer_stage(event)
+        except Exception:  # noqa: BLE001
+            pass
+
+    prefetch_cache = NarrationPrefetchCache(
+        slide_prompts=slide_prompts(),
+        slide_count=TOTAL_SLIDES,
+        tutor_system_prompt=BASE_TUTOR_PROMPT,
+        generate_fn=_prefetch_generate,
+        moderate_fn=_prefetch_moderate,
+        max_characters=NARRATION_MAX_CHARACTERS,
+        on_event=_prefetch_event,
+        curriculum_version=CURRICULUM_VERSION,
+        prompt_version=ACTIVE_TUTOR_PROMPT_VERSION,
+    )
+    runtime.set_prefetch_cache(prefetch_cache)
     embedding_client = OpenAIEmbeddingClient(
         api_key=api_key,
         model=RAG_CONFIG.embedding_model,
@@ -232,7 +338,7 @@ async def run_bot(websocket_client):
                 return
             lesson_started = True
             observability.mark_lesson_started()
-            await runtime.start_session()
+            await runtime.prepare_and_start_session()
 
     async def configuration_timeout() -> None:
         try:
@@ -242,6 +348,8 @@ async def run_bot(websocket_client):
             await start_lesson_once()
         except asyncio.CancelledError:
             return
+
+    voice_nav = VoiceNavigationProcessor(runtime)
 
     retrieval = RetrievalProcessor(
         runtime=runtime,
@@ -258,6 +366,7 @@ async def run_bot(websocket_client):
             ws_transport.input(),
             stt,
             input_safety,
+            voice_nav,
             retrieval,
             context_aggregator.user(),
             llm,
@@ -277,7 +386,7 @@ async def run_bot(websocket_client):
     )
     runtime.set_on_state_changed(protocol.publish_state)
 
-    observer = LessonLifecycleObserver(runtime, protocol, observability)
+    observer = LessonLifecycleObserver(runtime, protocol, observability, tts_processor=tts)
 
     task = PipelineTask(
         pipeline,
@@ -311,6 +420,7 @@ async def run_bot(websocket_client):
             slide_index=runtime.state.cursor.slide_index,
         )
         await runtime.end_session()
+        await runtime.end_session_cleanup_tts()
         await task.cancel()
 
     runner = PipelineRunner(handle_sigint=False)

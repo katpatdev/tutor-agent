@@ -27,6 +27,7 @@ from presentation_runtime import (
     PresentationRuntime,
     RecordingFrameSink,
     make_test_append_frame,
+    make_test_transform_frame,
     make_test_interruption_frame,
 )
 
@@ -54,6 +55,7 @@ def make_session() -> tuple[LessonProtocolSession, PresentationRuntime, Outbound
         frame_sink=sink,
         interruption_frame_factory=make_test_interruption_frame,
         messages_append_frame_factory=make_test_append_frame,
+        messages_transform_frame_factory=make_test_transform_frame,
     )
     session = LessonProtocolSession(runtime, outbound)
     runtime.set_on_state_changed(session.publish_state)

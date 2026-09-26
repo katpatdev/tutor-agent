@@ -25,9 +25,21 @@ def _env_float(name: str, default: float) -> float:
 
 
 def load_no_answer_timeout_seconds(default: float = 10.0) -> float:
-    """Seconds to wait for student speech after a tutor question (8–12 recommended)."""
+    """Seconds to wait for student speech after a tutor narration question (5–30)."""
     value = _env_float("NO_ANSWER_TIMEOUT_SECONDS", default)
     return max(5.0, min(30.0, value))
+
+
+def load_qa_silence_timeout_seconds(default: float = 12.0) -> float:
+    """Seconds for each Q&A wind-down silence stage (5–60)."""
+    value = _env_float("QA_SILENCE_TIMEOUT_SECONDS", default)
+    return max(5.0, min(60.0, value))
+
+
+def load_lesson_followup_wait_seconds(default: float = 12.0) -> float:
+    """Seconds before a one-shot post-answer hold reminder during the lesson (5–60)."""
+    value = _env_float("LESSON_FOLLOWUP_WAIT_SECONDS", default)
+    return max(5.0, min(60.0, value))
 
 
 def load_tts_speech_speed(default: float = 1.05) -> float:
