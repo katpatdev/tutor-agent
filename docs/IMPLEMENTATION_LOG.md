@@ -1233,3 +1233,69 @@ Date: 2026-09-26
 
 - Packaging / commit / push / release archive
 - Claiming live PASS until user confirms the 10.7 checklist
+
+---
+
+## Iteration 11.0 — Frontend-only UI beautification
+
+Date: 2026-09-26
+
+### Baseline
+
+- HEAD: `e5c4622` (stable 10.7)
+- Worktree clean before edits; no backend protocol or tutor-behavior changes
+
+### Changes (frontend only)
+
+- Centered educational layout: compact header, progress track, large slide stage, controls, Session Activity below
+- No right sidebar; no Follow-live checkbox; no conversation ledger / new WebSocket events
+- Restyled connection pill, tutor status, buttons, activity log entry classes
+- `uiLayout.test.ts` + updated control markup assertions
+
+### Offline validation
+
+- Frontend: 40 passed; tsc OK; vite build OK
+- Backend regression: 334 passed (unchanged)
+- Eval validate / offline fixtures OK
+- No commit / push / packaging
+
+---
+
+## Iteration 11.1 — Natural resume flow, conversation mirror, teal UI
+
+Date: 2026-09-26
+
+### Baseline
+
+- HEAD: `e5c4622` (stable 10.7 rollback point preserved)
+- Pre-change worktree already had Iteration 11.0 frontend beautification + early 11.1 stubs (`classroom_copy.py`, `conversation_ledger.py`, AFFIRM parser, `logical_id`)
+
+### Pre-change root causes (observed)
+
+- Mid-slide `continue` resumed narration without a spoken bridge
+- Plain `Yes` was not mapped to an application-owned expected response
+- Prefetched narration bypasses `onBotTranscript`, so Session Activity omitted Bot narration
+- UI still used indigo accents and a single Session Activity panel (no Live Conversation)
+
+### Changes
+
+- Application-owned classroom copy (`classroom_copy.py`) for mid-slide/checkpoint invites and resume/advance/nav/return bridges
+- `ExpectedClassroomResponse` + AFFIRM → continue; resume bridge (`RESUME_BRIDGE`) before segment resume
+- Read-only `ConversationLedger` observer; publish `conversation.entry` / `conversation.snapshot` via protocol
+- Mirror tutor text on owned TTS submit (logical_id retry-safe); user finals via InputSafety ALLOW path
+- Frontend: Live Conversation above Technical Logs; Jump to latest; teal/turquoise/emerald/blue palette
+- Tests: `tests/test_classroom_flow_11_1.py`, updated continue drains, `uiLayout.test.ts`
+
+### Offline validation
+
+- Backend: `359 passed`
+- Frontend vitest: `39 passed`; `tsc --noEmit` OK; `vite build` OK
+- `compileall` OK; `eval_harness validate` 21 cases; offline fixtures 13 OK
+- No commit / push / packaging; `e5c4622` remains rollback
+
+### Remaining live-test risks
+
+- Bridge vs cancelled BotStopped races under real transport timing
+- Conversation snapshot on reconnect after long sessions (bounded to 1000)
+- Live OpenAI latency for answers still independent of mirror
+

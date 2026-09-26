@@ -222,6 +222,9 @@ def test_interruption_then_answer_completion_replays_correct_segment() -> None:
         await runtime.on_bot_stopped_speaking()
         from classroom_control import parse_classroom_control
         assert await runtime.handle_classroom_control(parse_classroom_control("Continue."))
+        assert runtime.output_purpose is OutputPurpose.RESUME_BRIDGE
+        await runtime.on_bot_started_speaking()
+        await runtime.on_bot_stopped_speaking()
         assert runtime.output_purpose is OutputPurpose.RESUMED_NARRATION
         assert sink.tts_texts[-1] == active
 

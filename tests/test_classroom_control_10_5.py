@@ -270,20 +270,6 @@ def test_got_it_advances_without_llm_and_not_verified_complete() -> None:
         # Next segment queued (not a re-teach of first).
         assert any(first_text not in t for t in sink.tts_texts) or sink.tts_texts[-1] != first_text
 
-
-    async def test_continue_resumes_interrupted_segment() -> None:
-        runtime, sink, _ = make_runtime()
-        await load_two_segments(runtime)
-        plan = runtime.narration_plan
-        assert plan is not None
-        first = plan.segments[0].text
-        await runtime.on_bot_started_speaking()
-        await runtime.on_user_started_speaking()
-        intent = parse_classroom_control("Continue.")
-        assert intent is not None and intent.kind is ClassroomControlKind.CONTINUE
-        assert await runtime.handle_classroom_control(intent) is True
-        assert runtime.deterministic_continues == 1
-        assert first in sink.tts_texts[-1]
     asyncio.run(_run())
 
 def test_continue_resumes_interrupted_segment() -> None:
@@ -299,6 +285,9 @@ def test_continue_resumes_interrupted_segment() -> None:
         assert intent is not None and intent.kind is ClassroomControlKind.CONTINUE
         assert await runtime.handle_classroom_control(intent) is True
         assert runtime.deterministic_continues == 1
+        assert runtime.output_purpose is OutputPurpose.RESUME_BRIDGE
+        await runtime.on_bot_started_speaking()
+        await runtime.on_bot_stopped_speaking()
         assert first in sink.tts_texts[-1]
     asyncio.run(_run())
 

@@ -15,10 +15,13 @@ import {
   createGotoCommand,
   createPauseCommand,
   createResumeCommand,
+  ConversationTracker,
   formatNarrationStatus,
   humanModeLabel,
   LessonStateTracker,
+  parseConversationMessage,
   parseServerMessage,
+  type ConversationEntry,
   type LessonCommandMessage,
   type LessonCommandResultMessage,
   type LessonStateMessage,
@@ -64,8 +67,20 @@ class WebsocketClientApp {
   private transcriptConsent: HTMLInputElement | null = null;
   private transcriptStatusEl: HTMLElement | null = null;
   private transcriptStorageStateEl: HTMLElement | null = null;
+  private connectionPill: HTMLElement | null = null;
+  private tutorStatusEl: HTMLElement | null = null;
+  private tutorStatusLabel: HTMLElement | null = null;
+  private stageSlideNumber: HTMLElement | null = null;
+  private slideTrack: HTMLElement | null = null;
+  private progressBar: HTMLElement | null = null;
+  private progressFill: HTMLElement | null = null;
+  private clearActivityBtn: HTMLButtonElement | null = null;
+  private conversationLog: HTMLElement | null = null;
+  private jumpLatestBtn: HTMLButtonElement | null = null;
   private botAudio: HTMLAudioElement;
   private stateTracker = new LessonStateTracker();
+  private conversationTracker = new ConversationTracker();
+  private followConversationLive = true;
   private connected = false;
   private commandPending = false;
   private pendingRequestId: string | null = null;
@@ -73,14 +88,21 @@ class WebsocketClientApp {
   private maxUploadBytes = 5_242_880;
   private configureSent = false;
   private sessionConsentLocked = false;
+  private readonly slideTotal = 8;
 
   constructor() {
-    this.botAudio = document.createElement('audio');
+    const existingAudio = document.getElementById(
+      'bot-audio'
+    ) as HTMLAudioElement | null;
+    this.botAudio = existingAudio ?? document.createElement('audio');
     this.botAudio.autoplay = true;
-    document.body.appendChild(this.botAudio);
+    if (!existingAudio) {
+      document.body.appendChild(this.botAudio);
+    }
 
     this.setupDOMElements();
     this.setupEventListeners();
+    this.renderSlideTrack(0);
     this.applyControlAvailability(null);
     void this.refreshKnowledgeStatus();
   }
@@ -121,6 +143,20 @@ class WebsocketClientApp {
     this.transcriptStorageStateEl = document.getElementById(
       'transcript-storage-state'
     );
+    this.connectionPill = document.getElementById('connection-pill');
+    this.tutorStatusEl = document.getElementById('tutor-status');
+    this.tutorStatusLabel = document.getElementById('tutor-status-label');
+    this.stageSlideNumber = document.getElementById('stage-slide-number');
+    this.slideTrack = document.getElementById('slide-track');
+    this.progressBar = document.getElementById('progress-bar');
+    this.progressFill = document.getElementById('progress-fill');
+    this.clearActivityBtn = document.getElementById(
+      'clear-activity-btn'
+    ) as HTMLButtonElement;
+    this.conversationLog = document.getElementById('conversation-log');
+    this.jumpLatestBtn = document.getElementById(
+      'jump-latest-btn'
+    ) as HTMLButtonElement;
     if (this.transcriptConsent) {
       this.transcriptConsent.checked = false;
       this.transcriptConsent.disabled = false;
@@ -132,6 +168,7 @@ class WebsocketClientApp {
       });
     }
     this.updateTranscriptStorageLabel();
+    this.setConnectionVisual('disconnected', 'Disconnected');
     this.setTranscriptStatus(
       'Transcript saving is optional and off by default. Check the box before Connect. Changes after Connect apply only to the next session.'
     );
@@ -153,20 +190,205 @@ class WebsocketClientApp {
     this.knowledgeUploadBtn?.addEventListener('click', () => {
       void this.uploadKnowledge();
     });
+    this.clearActivityBtn?.addEventListener('click', () => {
+      if (this.debugLog) {
+        this.debugLog.replaceChildren();
+      }
+    });
+    this.jumpLatestBtn?.addEventListener('click', () => {
+      this.followConversationLive = true;
+      this.hideJumpLatest();
+      this.scrollConversationToLatest();
+    });
+    this.conversationLog?.addEventListener('scroll', () => {
+      this.onConversationScroll();
+    });
+  }
+
+  private classifyLogMessage(message: string): string {
+    if (message.startsWith('User: ')) return 'entry-user';
+    if (message.startsWith('Bot: ')) return 'entry-bot';
+    if (
+      message.startsWith('State ') ||
+      message.startsWith('Ignored stale state')
+    ) {
+      return 'entry-state';
+    }
+    if (
+      message.startsWith('Status:') ||
+      message.startsWith('Sent ') ||
+      message.startsWith('Command ok') ||
+      message.startsWith('Bot ready') ||
+      message.startsWith('Connecting') ||
+      message.startsWith('Connection complete') ||
+      message.startsWith('Initializing') ||
+      message.startsWith('Client disconnected') ||
+      message.startsWith('Setting up audio') ||
+      message.startsWith('Track stopped') ||
+      message.startsWith('Knowledge retrieval')
+    ) {
+      return 'entry-status';
+    }
+    if (
+      message.startsWith('Error') ||
+      message.startsWith('Command error') ||
+      message.startsWith('Failed') ||
+      message.startsWith('Audio warning')
+    ) {
+      return 'entry-error';
+    }
+    return 'entry-status';
   }
 
   private log(message: string): void {
     if (!this.debugLog) return;
     const entry = document.createElement('div');
-    entry.textContent = `${new Date().toISOString()} - ${message}`;
-    if (message.startsWith('User: ')) {
-      entry.style.color = '#1d4ed8';
-    } else if (message.startsWith('Bot: ')) {
-      entry.style.color = '#0b6e4f';
-    }
+    entry.className = `activity-entry ${this.classifyLogMessage(message)}`;
+    const time = document.createElement('span');
+    time.className = 'entry-time';
+    time.textContent = new Date().toLocaleTimeString();
+    const body = document.createElement('span');
+    body.textContent = message;
+    entry.append(time, body);
     this.debugLog.appendChild(entry);
     this.debugLog.scrollTop = this.debugLog.scrollHeight;
-    console.log(message);
+  }
+
+  private onConversationScroll(): void {
+    const el = this.conversationLog;
+    if (!el) return;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (distance > 48) {
+      this.followConversationLive = false;
+      this.showJumpLatest();
+    } else {
+      this.followConversationLive = true;
+      this.hideJumpLatest();
+    }
+  }
+
+  private showJumpLatest(): void {
+    if (this.jumpLatestBtn) this.jumpLatestBtn.hidden = false;
+  }
+
+  private hideJumpLatest(): void {
+    if (this.jumpLatestBtn) this.jumpLatestBtn.hidden = true;
+  }
+
+  private scrollConversationToLatest(): void {
+    const el = this.conversationLog;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }
+
+  private renderConversation(): void {
+    const el = this.conversationLog;
+    if (!el) return;
+    el.replaceChildren();
+    for (const entry of this.conversationTracker.list) {
+      el.appendChild(this.buildConversationRow(entry));
+    }
+    if (this.followConversationLive) {
+      this.scrollConversationToLatest();
+    }
+  }
+
+  private buildConversationRow(entry: ConversationEntry): HTMLElement {
+    const row = document.createElement('div');
+    const isUser = entry.role === 'user';
+    row.className = `conv-row ${isUser ? 'you' : 'tutor'}`;
+    const bubble = document.createElement('div');
+    bubble.className = 'conv-bubble';
+    const meta = document.createElement('div');
+    meta.className = 'conv-meta';
+    const role = document.createElement('span');
+    role.className = 'conv-role';
+    role.textContent = isUser ? 'You' : 'Tutor';
+    meta.appendChild(role);
+    if (entry.slide_number != null) {
+      const badge = document.createElement('span');
+      badge.className = 'conv-slide-badge';
+      badge.textContent =
+        entry.slide_title != null && entry.slide_title.length > 0
+          ? `Slide ${entry.slide_number}: ${entry.slide_title}`
+          : `Slide ${entry.slide_number}`;
+      meta.appendChild(badge);
+    }
+    const time = document.createElement('span');
+    time.textContent = new Date(entry.timestamp * 1000).toLocaleTimeString();
+    meta.appendChild(time);
+    const text = document.createElement('p');
+    text.className = 'conv-text';
+    text.textContent = entry.text;
+    bubble.append(meta, text);
+    row.appendChild(bubble);
+    return row;
+  }
+
+  private setConnectionVisual(
+    status: 'connected' | 'connecting' | 'disconnected' | 'error',
+    label: string
+  ): void {
+    if (this.connectionPill) {
+      this.connectionPill.dataset.status = status;
+    }
+    if (this.statusSpan) {
+      this.statusSpan.textContent = label;
+    }
+  }
+
+  private setTutorStatusFromMode(mode: string | null): void {
+    if (!this.tutorStatusEl || !this.tutorStatusLabel) return;
+    const map: Record<string, { status: string; label: string }> = {
+      IDLE: { status: 'idle', label: 'Ready' },
+      PRESENTING: { status: 'speaking', label: 'Tutor speaking' },
+      INTERRUPTED: { status: 'listening', label: 'Listening' },
+      ANSWERING: { status: 'answering', label: 'Answering' },
+      PAUSED: { status: 'paused', label: 'Paused' },
+      QA_MODE: { status: 'qa', label: 'Waiting for questions' },
+      FINISHED: { status: 'finished', label: 'Finished' },
+    };
+    const resolved = (mode && map[mode]) || { status: 'idle', label: 'Ready' };
+    this.tutorStatusEl.dataset.status = resolved.status;
+    this.tutorStatusLabel.textContent = resolved.label;
+  }
+
+  private renderSlideTrack(currentNumber: number): void {
+    if (!this.slideTrack) return;
+    this.slideTrack.replaceChildren();
+    for (let i = 1; i <= this.slideTotal; i += 1) {
+      const dot = document.createElement('span');
+      dot.className = 'slide-dot';
+      dot.setAttribute('role', 'listitem');
+      dot.title = `Slide ${i}`;
+      if (i === currentNumber) {
+        dot.classList.add('is-current');
+        dot.setAttribute('aria-current', 'step');
+      } else if (i < currentNumber) {
+        dot.classList.add('is-complete');
+      } else {
+        dot.classList.add('is-upcoming');
+      }
+      this.slideTrack.appendChild(dot);
+    }
+  }
+
+  private updateProgress(slideNumber: number, total: number): void {
+    const safeTotal = total > 0 ? total : this.slideTotal;
+    const clamped = Math.max(0, Math.min(slideNumber, safeTotal));
+    this.renderSlideTrack(clamped);
+    if (this.progressFill) {
+      const pct = safeTotal > 0 ? (clamped / safeTotal) * 100 : 0;
+      this.progressFill.style.width = `${pct}%`;
+    }
+    if (this.progressBar) {
+      this.progressBar.setAttribute('aria-valuemax', String(safeTotal));
+      this.progressBar.setAttribute('aria-valuenow', String(clamped));
+    }
+    if (this.stageSlideNumber) {
+      this.stageSlideNumber.textContent =
+        clamped > 0 ? `Slide ${clamped}` : 'Slide —';
+    }
   }
 
   private setError(message: string): void {
@@ -180,8 +402,19 @@ class WebsocketClientApp {
   }
 
   private updateStatus(status: string): void {
-    if (this.statusSpan) {
-      this.statusSpan.textContent = status;
+    const normalized = status.trim().toLowerCase();
+    if (normalized.includes('error')) {
+      this.setConnectionVisual('error', status);
+    } else if (normalized.includes('connecting')) {
+      this.setConnectionVisual('connecting', status);
+    } else if (normalized.includes('connected')) {
+      this.setConnectionVisual('connected', status);
+    } else if (normalized.includes('disconnected')) {
+      this.setConnectionVisual('disconnected', status);
+    } else {
+      if (this.statusSpan) {
+        this.statusSpan.textContent = status;
+      }
     }
     this.log(`Status: ${status}`);
   }
@@ -208,8 +441,13 @@ class WebsocketClientApp {
       }
     }
     if (this.narrationStatusEl) {
-      this.narrationStatusEl.textContent = formatNarrationStatus(state.narration);
+      const narration = formatNarrationStatus(state.narration);
+      this.narrationStatusEl.textContent =
+        narration ||
+        'Your tutor will guide you through natural disasters with voice, questions, and slide navigation.';
     }
+    this.setTutorStatusFromMode(state.mode);
+    this.updateProgress(state.slide.number, state.slide.total);
     this.applyControlAvailability(state);
   }
 
@@ -308,6 +546,19 @@ class WebsocketClientApp {
       this.log(
         `Knowledge retrieval ${retrieval.status} sources=${retrieval.sources.length}`
       );
+      return;
+    }
+
+    const conversation = parseConversationMessage(data);
+    if (conversation) {
+      if (conversation.type === 'conversation.snapshot') {
+        this.conversationTracker.applySnapshot(conversation.entries);
+        this.renderConversation();
+      } else if (
+        this.conversationTracker.applyEvent(conversation.kind, conversation.entry)
+      ) {
+        this.renderConversation();
+      }
       return;
     }
 
@@ -533,7 +784,12 @@ class WebsocketClientApp {
       const startTime = Date.now();
       this.clearError();
       this.stateTracker.reset();
+      this.conversationTracker.reset();
+      this.followConversationLive = true;
+      this.hideJumpLatest();
+      this.renderConversation();
       this.configureSent = false;
+      this.updateStatus('Connecting');
       if (this.transcriptConsent) {
         this.transcriptConsent.disabled = true;
       }
@@ -622,6 +878,8 @@ class WebsocketClientApp {
         this.commandPending = false;
         this.pendingRequestId = null;
         this.stateTracker.reset();
+        this.renderSlideTrack(0);
+        this.setTutorStatusFromMode(null);
         this.applyControlAvailability(null);
         if (
           this.botAudio.srcObject &&

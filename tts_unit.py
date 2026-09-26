@@ -85,6 +85,8 @@ class OwnedSpeechUnit:
     purpose_name: str
     utterance_id: int
     text: str
+    # Stable across no-audio retries (unit_id rotates for watchdogs).
+    logical_id: str = ""
     slide_index: Optional[int] = None
     narration_generation_id: Optional[str] = None
     segment_index: Optional[int] = None
@@ -101,9 +103,12 @@ class OwnedSpeechUnit:
     stale: bool = False
     start_watchdog_task: Any = None
     completion_watchdog_task: Any = None
-    # Idempotent recovery gates (content-free).
     recovery_gate: bool = False
     ignore_error_frames: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.logical_id:
+            self.logical_id = self.unit_id
 
     @staticmethod
     def new_id() -> str:

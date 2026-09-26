@@ -105,6 +105,9 @@ def test_a_answer_lifecycle_returns_from_answering() -> None:
         await runtime.on_bot_stopped_speaking()
         from classroom_control import parse_classroom_control
         assert await runtime.handle_classroom_control(parse_classroom_control("Continue."))
+        assert runtime.output_purpose is OutputPurpose.RESUME_BRIDGE
+        await runtime.on_bot_started_speaking()
+        await runtime.on_bot_stopped_speaking()
         assert runtime.output_purpose is OutputPurpose.RESUMED_NARRATION
         assert runtime.narration_plan is not None
         assert runtime.narration_plan.active_segment_index == segment
@@ -139,6 +142,9 @@ def test_b_cancelled_answer_completion_cannot_advance_or_duplicate() -> None:
         await runtime.on_bot_stopped_speaking()
         from classroom_control import parse_classroom_control
         assert await runtime.handle_classroom_control(parse_classroom_control("Continue."))
+        assert runtime.output_purpose is OutputPurpose.RESUME_BRIDGE
+        await runtime.on_bot_started_speaking()
+        await runtime.on_bot_stopped_speaking()
         # Exactly one segment replay queued after continue; no slide skip.
         assert sink.tts_texts[len(before) :][-1] == "Alpha sentence."
 
@@ -273,6 +279,9 @@ def test_g_slide_progression_after_interruption_answer() -> None:
         await runtime.on_bot_stopped_speaking()
         from classroom_control import parse_classroom_control
         assert await runtime.handle_classroom_control(parse_classroom_control("Continue."))
+        assert runtime.output_purpose is OutputPurpose.RESUME_BRIDGE
+        await runtime.on_bot_started_speaking()
+        await runtime.on_bot_stopped_speaking()
         # Finish resumed segment → advance to next slide.
         await runtime.on_bot_started_speaking()
         await runtime.on_bot_stopped_speaking()

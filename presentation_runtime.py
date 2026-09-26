@@ -49,12 +49,45 @@ from classroom_control import (
     ClassroomControlIntent,
     ClassroomControlKind,
 )
+from classroom_copy import (
+    CHECKPOINT_REMINDER,
+    POST_ANSWER_REMINDER,
+    QUESTION_PREAMBLE,
+    SLIDE1_TO_SLIDE2,
+    STAY_ACK,
+    advance_bridge,
+    checkpoint_first,
+    checkpoint_followup,
+    direct_nav_bridge,
+    mid_slide_followup,
+    resume_bridge,
+    return_bridge,
+    topic_for_slide,
+)
+from conversation_ledger import (
+    ConversationLedger,
+    PlaybackStatus,
+    PublishFn,
+    TutorSource,
+    DEFAULT_MAX_ENTRIES as CONVERSATION_MAX_ENTRIES,
+)
 from lesson_context import (
     build_lesson_context_snapshot,
     lesson_context_message_dict,
 )
 from narration_prefetch import NarrationPrefetchCache, PrefetchState
 from voice_navigation import VoiceNavAction, VoiceNavIntent
+import os
+
+
+def _conversation_max_entries() -> int:
+    raw = os.environ.get("CONVERSATION_HISTORY_MAX_ENTRIES", "").strip()
+    if not raw:
+        return CONVERSATION_MAX_ENTRIES
+    try:
+        return max(100, int(raw))
+    except ValueError:
+        return CONVERSATION_MAX_ENTRIES
 
 # Active tutor system prompt is loaded from the version-controlled registry.
 _ACTIVE_TUTOR: LoadedPrompt = load_active_tutor_prompt()
@@ -91,29 +124,27 @@ REPEAT_UNAVAILABLE_TEXT = (
     "I don't have a section to replay right now. Please ask your question, "
     "or say continue when you are ready."
 )
-POST_ANSWER_INVITE_MID_SLIDE = (
-    "Is that clear, or do you have another question? Otherwise, I can continue."
-)
-POST_ANSWER_INVITE_CHECKPOINT = (
-    "Is everything clear, or do you have another question? Otherwise, we can move on."
-)
-# Back-compat alias used by older tests.
+# Dynamic invites use classroom_copy helpers; these aliases keep older imports working.
+POST_ANSWER_INVITE_MID_SLIDE = mid_slide_followup(0)
+POST_ANSWER_INVITE_CHECKPOINT = checkpoint_followup()
 POST_ANSWER_INVITE_TEXT = POST_ANSWER_INVITE_MID_SLIDE
-POST_ANSWER_REMINDER_TEXT = (
-    "Say continue when you're ready, or ask another question."
-)
-CHECKPOINT_REMINDER_TEXT = (
-    "When you're ready, say continue to move on, or ask a question."
-)
+POST_ANSWER_REMINDER_TEXT = POST_ANSWER_REMINDER
+CHECKPOINT_REMINDER_TEXT = CHECKPOINT_REMINDER
 DEFAULT_LESSON_FOLLOWUP_WAIT_SECONDS = 12.0
 RETURN_ORIGIN_CLARIFY_TEXT = (
     "I don't have a saved place to return to. Which slide number should I go to?"
 )
-STAY_ACK_TEXT = "Okay, we'll stay on this slide."
-QUESTION_PREAMBLE_TEXT = "Of course. What would you like to ask?"
-SLIDE1_TO_SLIDE2_TRANSITION = (
-    "Let's begin with what natural disasters are."
-)
+STAY_ACK_TEXT = STAY_ACK
+QUESTION_PREAMBLE_TEXT = QUESTION_PREAMBLE
+SLIDE1_TO_SLIDE2_TRANSITION = SLIDE1_TO_SLIDE2
+
+
+class ExpectedClassroomResponse(Enum):
+    """What a plain affirmation should mean after an app-owned prompt."""
+
+    NONE = auto()
+    RESUME_CURRENT = auto()
+    ADVANCE_NEXT = auto()
 
 
 class OutputPurpose(Enum):
@@ -135,6 +166,7 @@ class OutputPurpose(Enum):
     POST_ANSWER_INVITE = auto()
     POST_ANSWER_REMINDER = auto()
     NAV_ACK = auto()
+    RESUME_BRIDGE = auto()
     CLARIFY = auto()
     SLIDE_CHECKPOINT = auto()
     SLIDE_TRANSITION = auto()
@@ -208,6 +240,7 @@ _STOPPABLE_PURPOSES = frozenset(
         OutputPurpose.POST_ANSWER_INVITE,
         OutputPurpose.POST_ANSWER_REMINDER,
         OutputPurpose.NAV_ACK,
+        OutputPurpose.RESUME_BRIDGE,
         OutputPurpose.CLARIFY,
         OutputPurpose.SLIDE_CHECKPOINT,
         OutputPurpose.SLIDE_TRANSITION,
@@ -332,6 +365,10 @@ class PresentationRuntime:
         self._latest_student_question: str = ""
         self._lesson_context_chars = 0
         self._lesson_context_injections = 0
+        self._expected_classroom_response = ExpectedClassroomResponse.NONE
+        self._pending_resume_after_bridge = False
+        self._conversation = ConversationLedger(max_entries=_conversation_max_entries())
+        self._mirror_next_as_repeat = False
         self.slide_checkpoints = 0
         self.slide_checkpoint_exits = 0
         self.transitions_queued = 0
@@ -339,6 +376,8 @@ class PresentationRuntime:
         self.continue_resolved_advance = 0
         self.continue_resolved_resume = 0
         self.nav_false_positive_prevented = 0
+        self.resume_bridges_spoken = 0
+        self.affirm_resolved_as_continue = 0
 
         # Public counters intentionally remain simple integers for offline tests.
         self.plans_created = 0
@@ -579,28 +618,130 @@ class PresentationRuntime:
         if self._prefetch is not None:
             self._prefetch.mark_interaction_priority(active)
 
-    def _format_transition(self, target_0based: int, *, sequential: bool) -> str:
-        display = target_0based + 1
+    @property
+    def conversation_ledger(self) -> ConversationLedger:
+        return self._conversation
+
+    @property
+    def expected_classroom_response(self) -> ExpectedClassroomResponse:
+        return self._expected_classroom_response
+
+    def set_conversation_publisher(self, publish: Optional[PublishFn]) -> None:
+        """Wire failure-isolated outbound publish for conversation mirror events."""
+        self._conversation.publish = publish
+
+    def _clear_expected_response(self) -> None:
+        self._expected_classroom_response = ExpectedClassroomResponse.NONE
+
+    def _set_expected_response(self, expected: ExpectedClassroomResponse) -> None:
+        self._expected_classroom_response = expected
+
+    def _conversation_slide_meta(self) -> tuple[int, str, str]:
+        slide_0 = self._controller.state.cursor.slide_index
         try:
-            title = slide_title(target_0based)
+            title = slide_title(slide_0)
         except Exception:  # noqa: BLE001
-            title = f"slide {display}"
-        # Soften curriculum titles for speech.
-        topic = title.strip()
-        if sequential:
-            return (
-                f"Great, let's move to slide {display}, where we'll look at {topic}."
+            title = f"Slide {slide_0 + 1}"
+        return slide_0 + 1, title, self._controller.state.mode.name
+
+    @staticmethod
+    def _tutor_source_for_unit(unit: Any) -> TutorSource:
+        purpose = getattr(unit, "purpose_name", "") or ""
+        kind = getattr(unit, "kind", None)
+        if purpose == OutputPurpose.RESUME_BRIDGE.name:
+            return TutorSource.RESUME
+        if purpose in {
+            OutputPurpose.NAV_ACK.name,
+            OutputPurpose.SLIDE_TRANSITION.name,
+        }:
+            return TutorSource.TRANSITION
+        if purpose in {
+            OutputPurpose.SLIDE_CHECKPOINT.name,
+            OutputPurpose.POST_ANSWER_INVITE.name,
+            OutputPurpose.POST_ANSWER_REMINDER.name,
+        }:
+            return TutorSource.CHECKPOINT
+        if purpose == OutputPurpose.INTERRUPTION_ANSWER.name:
+            return TutorSource.ANSWER
+        if purpose in {
+            OutputPurpose.QA_TRANSITION.name,
+            OutputPurpose.QA_RESPONSE.name,
+            OutputPurpose.QA_FOLLOWUP.name,
+            OutputPurpose.QA_REMINDER.name,
+            OutputPurpose.QA_CLOSING.name,
+        }:
+            return TutorSource.QA
+        if purpose in {
+            OutputPurpose.CLARIFY.name,
+            OutputPurpose.QUESTION_GATE.name,
+            OutputPurpose.SAFETY_REDIRECT.name,
+            OutputPurpose.SAFETY_MESSAGE.name,
+        }:
+            return TutorSource.CLARIFICATION
+        if kind is SpeechUnitKind.NARRATION:
+            return TutorSource.NARRATION
+        if purpose == OutputPurpose.CONTROL_RESPONSE.name:
+            return TutorSource.REPEAT
+        return TutorSource.OTHER
+
+    async def record_user_utterance(self, text: str) -> None:
+        """Observer-only: record one final student utterance for the UI mirror."""
+        try:
+            number, title, mode = self._conversation_slide_meta()
+            await self._conversation.add_user(
+                text,
+                slide_number=number,
+                slide_title=title,
+                mode=mode,
             )
-        return f"Sure, let's move to slide {display}."
+        except Exception:  # noqa: BLE001
+            pass
+
+    async def _mirror_tutor_unit(self, unit: Any) -> None:
+        """Record tutor text when an owned unit is submitted for presentation."""
+        try:
+            number, title, mode = self._conversation_slide_meta()
+            if getattr(unit, "slide_index", None) is not None:
+                number = int(unit.slide_index) + 1
+                try:
+                    title = slide_title(int(unit.slide_index))
+                except Exception:  # noqa: BLE001
+                    title = f"Slide {number}"
+            source = self._tutor_source_for_unit(unit)
+            if self._mirror_next_as_repeat:
+                source = TutorSource.REPEAT
+                self._mirror_next_as_repeat = False
+            await self._conversation.add_or_update_tutor(
+                getattr(unit, "text", "") or "",
+                source=source,
+                tts_unit_id=getattr(unit, "logical_id", None) or getattr(unit, "unit_id", None),
+                slide_number=number,
+                slide_title=title,
+                mode=mode,
+                playback_status=PlaybackStatus.QUEUED,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+    async def _mirror_playback(
+        self, unit: Any, status: PlaybackStatus
+    ) -> None:
+        try:
+            await self._conversation.update_playback(
+                tts_unit_id=getattr(unit, "logical_id", None)
+                or getattr(unit, "unit_id", None),
+                status=status,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _format_transition(self, target_0based: int, *, sequential: bool) -> str:
+        if sequential:
+            return advance_bridge(target_0based)
+        return direct_nav_bridge(target_0based)
 
     def _checkpoint_prompt_for_slide(self, slide_0based: int) -> str:
-        try:
-            topic = slide_title(slide_0based)
-        except Exception:  # noqa: BLE001
-            topic = f"slide {slide_0based + 1}"
-        return (
-            f"That covers {topic}. Do you have any questions, or shall we move on?"
-        )
+        return checkpoint_first(slide_0based)
 
     def _exit_post_answer_hold(self, *, reason: str) -> None:
         if self._post_answer_hold_stage is PostAnswerHoldStage.IDLE:
@@ -714,11 +855,14 @@ class PresentationRuntime:
         self.mark_student_interaction_priority(False)
         if self._answer_hold_context is AnswerHoldContext.CHECKPOINT:
             invite = POST_ANSWER_INVITE_CHECKPOINT
+            self._set_expected_response(ExpectedClassroomResponse.ADVANCE_NEXT)
             # Restore checkpoint waiting after the answer invite.
             if self._checkpoint_slide_index is not None:
                 self._slide_checkpoint_stage = SlideCheckpointStage.WAITING
         else:
-            invite = POST_ANSWER_INVITE_MID_SLIDE
+            slide = self._controller.state.cursor.slide_index
+            invite = mid_slide_followup(slide)
+            self._set_expected_response(ExpectedClassroomResponse.RESUME_CURRENT)
         self._output_purpose = OutputPurpose.POST_ANSWER_INVITE
         self._utterance_audible = False
         self._active_utterance_id += 1
@@ -736,6 +880,7 @@ class PresentationRuntime:
         self._checkpoint_slide_index = slide_0based
         self.slide_checkpoints += 1
         self._note_diag("slide_checkpoint_entered", slide=slide_0based + 1)
+        self._set_expected_response(ExpectedClassroomResponse.ADVANCE_NEXT)
         self._output_purpose = OutputPurpose.SLIDE_CHECKPOINT
         self._utterance_audible = False
         self._active_utterance_id += 1
@@ -998,7 +1143,7 @@ class PresentationRuntime:
         narration_generation_id: Optional[str] = None,
         segment_index: Optional[int] = None,
     ) -> None:
-        await self._tts.queue_unit(
+        unit = await self._tts.queue_unit(
             text,
             kind=kind,
             purpose_name=purpose_name,
@@ -1007,6 +1152,8 @@ class PresentationRuntime:
             narration_generation_id=narration_generation_id,
             segment_index=segment_index,
         )
+        await self._mirror_tutor_unit(unit)
+
     async def accept_approved_narration(self, text: str) -> None:
         """Build and begin a segment plan from safety-approved narration text."""
         async with self._lock:
@@ -1095,6 +1242,7 @@ class PresentationRuntime:
         self._resume_segment_pending = False
         if replay:
             self.segment_replays += 1
+            self._mirror_next_as_repeat = True
         await self._queue_tts_speak(text)
 
     def _mark_active_segment_interrupted(self) -> None:
@@ -1130,7 +1278,7 @@ class PresentationRuntime:
         plan = self._narration_plan
         gen = str(plan.generation_id) if plan is not None else None
         seg = plan.active_segment_index if plan is not None else None
-        await self._tts.queue_unit(
+        unit = await self._tts.queue_unit(
             text,
             kind=SpeechUnitKind.NARRATION,
             purpose_name=self._output_purpose.name,
@@ -1139,6 +1287,7 @@ class PresentationRuntime:
             narration_generation_id=gen,
             segment_index=seg,
         )
+        await self._mirror_tutor_unit(unit)
 
     def _speech_unit_still_current(self, unit) -> bool:
         if self._session_ended or unit.cancelled or unit.stale:
@@ -1180,14 +1329,16 @@ class PresentationRuntime:
             if self._output_purpose in _QA_SPEECH_PURPOSES
             else SpeechUnitKind.ANSWER
         )
-        await self._tts.queue_unit(
+        unit = await self._tts.queue_unit(
             text,
             kind=kind,
             purpose_name=self._output_purpose.name,
             utterance_id=self._active_utterance_id,
+            slide_index=self._controller.state.cursor.slide_index,
             answer_unit_index=self._answer_unit_index,
             answer_unit_total=len(self._answer_unit_texts),
         )
+        await self._mirror_tutor_unit(unit)
 
     async def on_tts_error_frame(self, frame, *, tts_processor=None) -> None:
         async with self._lock:
@@ -1268,6 +1419,11 @@ class PresentationRuntime:
                 self._tts.on_normal_completion()
                 self._output_purpose = OutputPurpose.NONE
                 await self._begin_slide_narration(resuming=False)
+            elif purpose is OutputPurpose.RESUME_BRIDGE:
+                self._tts.on_normal_completion()
+                self._output_purpose = OutputPurpose.NONE
+                if self._pending_resume_after_bridge:
+                    await self._finish_resume_bridge_locked()
             elif purpose is OutputPurpose.POST_ANSWER_INVITE:
                 self._tts.on_normal_completion()
                 self._output_purpose = OutputPurpose.NONE
@@ -1657,6 +1813,7 @@ class PresentationRuntime:
             await self._queue_interruption()
         elif effect is LessonEffect.BEGIN_ANSWER:
             self._cancel_no_answer_wait()
+            self._clear_expected_response()
             self._tts.invalidate_pending(reason="begin_answer")
             self._output_purpose = OutputPurpose.INTERRUPTION_ANSWER
             self._answer_speech_units_remaining = 0
@@ -1670,6 +1827,7 @@ class PresentationRuntime:
             await self._queue_qa_transition_once()
         elif effect is LessonEffect.SESSION_FINISHED:
             self._cancel_all_student_wait_timers()
+            self._clear_expected_response()
             self._output_purpose = OutputPurpose.NONE
             self._session_ended = True
             self._qa_wind_down_stage = QaWindDownStage.DONE
@@ -1834,9 +1992,11 @@ class PresentationRuntime:
             )
             self._exit_post_answer_hold(reason="navigation")
             self._exit_slide_checkpoint(reason="navigation")
+            self._clear_expected_response()
             self._enter_post_answer_hold_on_resume = False
             self._skip_next_resume_narration = True
             self._awaiting_actual_question = False
+            self._pending_resume_after_bridge = False
 
             # One-level detour only: keep the first departure origin until returned.
             if target != current and self._detour_origin is None:
@@ -2024,16 +2184,32 @@ class PresentationRuntime:
                 if mode is not LessonMode.QA_MODE:
                     self.control_intents_ambiguous += 1
                     return False
+                self._clear_expected_response()
                 await self._begin_qa_closing(explicit=True)
                 return True
 
             if intent.kind is ClassroomControlKind.ACKNOWLEDGE:
+                self._clear_expected_response()
                 return await self._handle_acknowledge_locked()
+
+            if intent.kind is ClassroomControlKind.AFFIRM:
+                if (
+                    self._expected_classroom_response
+                    is ExpectedClassroomResponse.NONE
+                ):
+                    return False
+                self.affirm_resolved_as_continue += 1
+                self._note_diag(
+                    "affirm_resolved",
+                    expected=self._expected_classroom_response.name,
+                )
+                return await self._handle_continue_locked()
 
             if intent.kind is ClassroomControlKind.CONTINUE:
                 return await self._handle_continue_locked()
 
             if intent.kind is ClassroomControlKind.REPEAT:
+                self._clear_expected_response()
                 return await self._handle_repeat_locked()
 
             self.control_intents_ambiguous += 1
@@ -2061,8 +2237,9 @@ class PresentationRuntime:
             segment=origin.segment_index + 1,
         )
         self._exit_post_answer_hold(reason="return_origin")
+        self._clear_expected_response()
         self._detour_origin = None
-        self._nav_ack_text = f"Returning to slide {origin.slide_index + 1}."
+        self._nav_ack_text = return_bridge(origin.slide_index)
         self._tts.invalidate_pending(reason="return_origin")
         self._answer_unit_texts = []
         self._answer_speech_units_remaining = 0
@@ -2170,6 +2347,7 @@ class PresentationRuntime:
         mode = self._controller.state.mode
         if mode is LessonMode.QA_MODE:
             self.classroom_control_matched += 1
+            self._clear_expected_response()
             self._note_diag("continue_resolved", action="stay_qa")
             return True
         if mode is LessonMode.FINISHED:
@@ -2186,6 +2364,7 @@ class PresentationRuntime:
             return False
 
         self.classroom_control_matched += 1
+        self._clear_expected_response()
 
         # Checkpoint: advance to next slide (never invent slide 9).
         if self.in_slide_checkpoint or (
@@ -2201,8 +2380,7 @@ class PresentationRuntime:
                 return True
             self._exit_slide_checkpoint(reason="continue")
             target = current + 1
-            sequential = target == current + 1
-            self._nav_ack_text = self._format_transition(target, sequential=True)
+            self._nav_ack_text = advance_bridge(target)
             self.transitions_queued += 1
             self.continue_resolved_advance += 1
             self.deterministic_continues += 1
@@ -2215,10 +2393,11 @@ class PresentationRuntime:
         self._exit_post_answer_hold(reason="continue")
 
         if mode is LessonMode.ANSWERING or mode is LessonMode.INTERRUPTED:
-            await self._leave_answering_for_control(skip_resume=False)
+            await self._leave_answering_for_control(skip_resume=True)
             self.deterministic_continues += 1
             self.continue_resolved_resume += 1
-            self._note_diag("continue_resolved", action="resume_segment")
+            self._note_diag("continue_resolved", action="resume_bridge")
+            await self._speak_resume_bridge_locked()
             await self._notify_state_changed()
             return True
 
@@ -2245,7 +2424,7 @@ class PresentationRuntime:
             last = self._controller.state.slide_count - 1
             if plan is not None and plan.is_complete and current < last:
                 target = current + 1
-                self._nav_ack_text = self._format_transition(target, sequential=True)
+                self._nav_ack_text = advance_bridge(target)
                 self.transitions_queued += 1
                 self.continue_resolved_advance += 1
                 self.deterministic_continues += 1
@@ -2254,25 +2433,63 @@ class PresentationRuntime:
                 return True
             self.deterministic_continues += 1
             self.continue_resolved_resume += 1
-            self._output_purpose = OutputPurpose.RESUMED_NARRATION
-            await self._begin_slide_narration(resuming=True)
+            await self._speak_resume_bridge_locked()
             await self._notify_state_changed()
             return True
 
         self.deterministic_continues += 1
         self.continue_resolved_resume += 1
-        self._note_diag("continue_resolved", action="resume_segment")
+        self._note_diag("continue_resolved", action="resume_bridge")
         self._tts.invalidate_pending(reason="deterministic_continue")
         if self._bot_speaking or self._output_purpose in _STOPPABLE_PURPOSES:
             self._cancel_audible_playback_only()
             await self._queue_interruption()
         plan.segment_queued = False
         self._queued_generation_id = None
-        self._output_purpose = OutputPurpose.RESUMED_NARRATION
-        replay = plan.active_status is SegmentStatus.INTERRUPTED
-        await self._queue_active_segment(replay=replay)
+        await self._speak_resume_bridge_locked()
         await self._notify_state_changed()
         return True
+
+    async def _speak_resume_bridge_locked(self) -> None:
+        """Speak the mid-slide resume bridge; narration resumes after it finishes."""
+        # Orphaned cancel-stop expectations must not consume the bridge's BotStopped
+        # (common when continue arrives before the cancelled audio's stop frame).
+        if self._expected_suppressed_stops > 0:
+            self.pre_audio_cancel_without_stop += self._expected_suppressed_stops
+            self._expected_suppressed_stops = 0
+            self._cancel_stop_pending = False
+        self._bot_speaking = False
+        self._utterance_audible = False
+        slide = self._controller.state.cursor.slide_index
+        self._pending_resume_after_bridge = True
+        self.resume_bridges_spoken += 1
+        self._output_purpose = OutputPurpose.RESUME_BRIDGE
+        self._active_utterance_id += 1
+        await self._queue_owned_speech(
+            resume_bridge(slide),
+            kind=SpeechUnitKind.OTHER,
+            purpose_name=OutputPurpose.RESUME_BRIDGE.name,
+            slide_index=slide,
+        )
+
+    async def _finish_resume_bridge_locked(self) -> None:
+        """After resume bridge audio completes, resume the preserved segment."""
+        self._pending_resume_after_bridge = False
+        plan = self._narration_plan
+        if (
+            plan is not None
+            and not plan.invalidated
+            and not plan.is_complete
+            and plan.slide_index == self._controller.state.cursor.slide_index
+        ):
+            plan.segment_queued = False
+            self._queued_generation_id = None
+            self._output_purpose = OutputPurpose.RESUMED_NARRATION
+            replay = plan.active_status is SegmentStatus.INTERRUPTED
+            await self._queue_active_segment(replay=replay)
+            return
+        self._output_purpose = OutputPurpose.RESUMED_NARRATION
+        await self._begin_slide_narration(resuming=True)
 
     async def _handle_repeat_locked(self) -> bool:
         """Replay exact moderated segment text; no RAG/LLM."""
@@ -2359,6 +2576,9 @@ class PresentationRuntime:
             self._speaking_utterance_id = self._active_utterance_id
             self._cancel_stop_pending = False
             self._tts.on_audible_start()
+            pending = self._tts.pending
+            if pending is not None:
+                await self._mirror_playback(pending, PlaybackStatus.SPEAKING)
             if (
                 self._controller.state.mode is LessonMode.QA_MODE
                 and self._output_purpose is OutputPurpose.NONE
@@ -2381,10 +2601,13 @@ class PresentationRuntime:
             self._cancel_stop_pending = False
 
             purpose = self._output_purpose
+            pending_unit = self._tts.pending
             if purpose is OutputPurpose.SAFETY_REDIRECT:
                 self._output_purpose = OutputPurpose.NONE
                 self._safety_status = SafetyStatus.NORMAL
                 self._safety_notice = None
+                if pending_unit is not None:
+                    await self._mirror_playback(pending_unit, PlaybackStatus.SPOKEN)
                 if self._controller.state.mode is LessonMode.ANSWERING:
                     await self._dispatch(
                         LessonEvent(
@@ -2397,42 +2620,71 @@ class PresentationRuntime:
                 return
             if purpose is OutputPurpose.SAFETY_MESSAGE:
                 self._output_purpose = OutputPurpose.NONE
+                if pending_unit is not None:
+                    await self._mirror_playback(pending_unit, PlaybackStatus.SPOKEN)
                 await self._notify_state_changed()
                 return
             if purpose in _NARRATION_PURPOSES:
+                if pending_unit is not None:
+                    await self._mirror_playback(pending_unit, PlaybackStatus.SPOKEN)
                 self._tts.on_normal_completion()
                 await self._complete_active_segment()
             elif purpose is OutputPurpose.INTERRUPTION_ANSWER:
+                if pending_unit is not None:
+                    await self._mirror_playback(pending_unit, PlaybackStatus.SPOKEN)
                 self._tts.on_normal_completion()
                 await self._finish_answer_unit_or_complete()
             elif purpose in _QA_SPEECH_PURPOSES:
+                if pending_unit is not None:
+                    await self._mirror_playback(pending_unit, PlaybackStatus.SPOKEN)
                 self._tts.on_normal_completion()
                 await self._finish_qa_unit_or_idle()
             elif purpose is OutputPurpose.CONTROL_RESPONSE:
+                if pending_unit is not None:
+                    await self._mirror_playback(pending_unit, PlaybackStatus.SPOKEN)
                 self._tts.on_normal_completion()
                 self._output_purpose = OutputPurpose.NONE
             elif purpose is OutputPurpose.NAV_ACK:
+                if pending_unit is not None:
+                    await self._mirror_playback(pending_unit, PlaybackStatus.SPOKEN)
                 self._tts.on_normal_completion()
                 self._output_purpose = OutputPurpose.NONE
                 await self._begin_slide_narration(resuming=False)
+            elif purpose is OutputPurpose.RESUME_BRIDGE:
+                if pending_unit is not None:
+                    await self._mirror_playback(pending_unit, PlaybackStatus.SPOKEN)
+                self._tts.on_normal_completion()
+                self._output_purpose = OutputPurpose.NONE
+                if self._pending_resume_after_bridge:
+                    await self._finish_resume_bridge_locked()
             elif purpose is OutputPurpose.POST_ANSWER_INVITE:
+                if pending_unit is not None:
+                    await self._mirror_playback(pending_unit, PlaybackStatus.SPOKEN)
                 self._tts.on_normal_completion()
                 self._output_purpose = OutputPurpose.NONE
                 if self.in_post_answer_hold:
                     self._arm_post_answer_hold_timer()
             elif purpose is OutputPurpose.POST_ANSWER_REMINDER:
+                if pending_unit is not None:
+                    await self._mirror_playback(pending_unit, PlaybackStatus.SPOKEN)
                 self._tts.on_normal_completion()
                 self._output_purpose = OutputPurpose.NONE
                 # Remain in hold after reminder; do not resume narration.
             elif purpose is OutputPurpose.SLIDE_CHECKPOINT:
+                if pending_unit is not None:
+                    await self._mirror_playback(pending_unit, PlaybackStatus.SPOKEN)
                 self._tts.on_normal_completion()
                 self._output_purpose = OutputPurpose.NONE
                 if self.in_slide_checkpoint:
                     self._arm_slide_checkpoint_timer()
             elif purpose is OutputPurpose.QUESTION_GATE:
+                if pending_unit is not None:
+                    await self._mirror_playback(pending_unit, PlaybackStatus.SPOKEN)
                 self._tts.on_normal_completion()
                 self._output_purpose = OutputPurpose.NONE
             elif purpose is OutputPurpose.CLARIFY:
+                if pending_unit is not None:
+                    await self._mirror_playback(pending_unit, PlaybackStatus.SPOKEN)
                 self._tts.on_normal_completion()
                 self._output_purpose = OutputPurpose.NONE
             elif purpose is OutputPurpose.NO_ANSWER_CONTINUE:
@@ -2517,6 +2769,9 @@ class PresentationRuntime:
             was_in_checkpoint = self.in_slide_checkpoint
             self._cancel_all_student_wait_timers()
             self.mark_student_interaction_priority(True)
+            # New student speech starts a factual turn → clear Yes-expectation.
+            if was_in_hold or was_in_checkpoint or self._bot_speaking:
+                self._clear_expected_response()
             if was_in_hold:
                 # New student speech during hold: cancel reminder; keep pending
                 # resume until continue/ack/nav or a new answer cycle.
@@ -2646,6 +2901,8 @@ class PresentationRuntime:
     async def pause(self, cursor: Optional[NarrationCursor] = None) -> TransitionResult:
         async with self._lock:
             self._tts.invalidate_pending(reason="pause")
+            self._clear_expected_response()
+            self._pending_resume_after_bridge = False
             if self._safety_status is SafetyStatus.HOLD:
                 raise InvalidLessonTransition(
                     "Pause is not available during a safety hold",
@@ -2701,6 +2958,8 @@ class PresentationRuntime:
                 event_type=LessonEventType.GOTO_SLIDE_REQUESTED,
             )
         self._invalidate_narration_plan()
+        self._clear_expected_response()
+        self._pending_resume_after_bridge = False
         await self._stop_active_narration_for_navigation()
         self._presented_slide_instructions.discard(slide_index)
         return await self._dispatch(

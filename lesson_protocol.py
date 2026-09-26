@@ -24,6 +24,8 @@ MSG_RESULT = "lesson.command_result"
 MSG_SESSION_READY = "session.ready"
 MSG_SESSION_CONFIGURE = "session.configure"
 MSG_SESSION_CONFIGURE_RESULT = "session.configure_result"
+MSG_CONVERSATION_ENTRY = "conversation.entry"
+MSG_CONVERSATION_SNAPSHOT = "conversation.snapshot"
 SUPPORTED_COMMANDS = frozenset({"pause", "resume", "goto_slide", "get_state"})
 REQUEST_ID_HISTORY_LIMIT = 128
 
@@ -325,10 +327,29 @@ class LessonProtocolSession:
         self._transcript_persistence_available = transcript_persistence_available
         self._on_configured_start = on_configured_start
         self._configure_deduper: Dict[str, Dict[str, Any]] = {}
+        runtime.set_conversation_publisher(self.publish_conversation_event)
 
     @property
     def sequence(self) -> int:
         return self._sequence
+
+    async def publish_conversation_event(self, payload: Mapping[str, Any]) -> None:
+        """Forward conversation mirror events (failure-isolated by the ledger)."""
+        if self._closed:
+            return
+        message = dict(payload)
+        message.setdefault("version", PROTOCOL_VERSION)
+        await self._send_outbound(wrap_rtvi_server_message(message))
+
+    async def publish_conversation_snapshot(self) -> Dict[str, Any]:
+        entries = self._runtime.conversation_ledger.snapshot()
+        message = {
+            "type": MSG_CONVERSATION_SNAPSHOT,
+            "version": PROTOCOL_VERSION,
+            "entries": entries,
+        }
+        await self._send_outbound(wrap_rtvi_server_message(message))
+        return message
 
     async def publish_session_ready(self) -> Dict[str, Any]:
         session_id = (
@@ -341,6 +362,10 @@ class LessonProtocolSession:
             transcript_persistence_available=self._transcript_persistence_available,
         )
         await self._send_outbound(wrap_rtvi_server_message(message))
+        try:
+            await self.publish_conversation_snapshot()
+        except Exception:  # noqa: BLE001
+            pass
         return message
 
     async def publish_state(self) -> Dict[str, Any]:

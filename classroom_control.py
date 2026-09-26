@@ -18,6 +18,7 @@ class ClassroomControlKind(str, Enum):
     NAVIGATION = "navigation"
     ACKNOWLEDGE = "acknowledge"
     CONTINUE = "continue"
+    AFFIRM = "affirm"  # plain yes/ok — resolved by expected classroom prompt
     REPEAT = "repeat"
     QA_COMPLETION = "qa_completion"
     RETURN_ORIGIN = "return_origin"
@@ -316,15 +317,27 @@ _ACK_PATTERNS = (
     re.compile(r"^i\s+understand\s+that\s+point$"),
 )
 
+_AFFIRM_PATTERNS = (
+    re.compile(r"^yes$"),
+    re.compile(r"^yeah$"),
+    re.compile(r"^yep$"),
+    re.compile(r"^yup$"),
+    re.compile(r"^ok$"),
+    re.compile(r"^okay$"),
+)
+
 _CONTINUE_PATTERNS = (
     re.compile(r"^continue$"),
     re.compile(r"^please\s+continue$"),
     re.compile(r"^continue\s+please$"),
     re.compile(r"^you\s+can\s+continue$"),
     re.compile(r"^you\s+may\s+continue$"),
-    re.compile(r"^yes\s+continue$"),
-    re.compile(r"^okay\s+continue$"),
-    re.compile(r"^ok\s+continue$"),
+    re.compile(r"^yes\s*,?\s*continue$"),
+    re.compile(r"^yes\s*,?\s*please\s+continue$"),
+    re.compile(r"^okay\s*,?\s*(?:you\s+can\s+)?continue$"),
+    re.compile(r"^ok\s*,?\s*(?:you\s+can\s+)?continue$"),
+    re.compile(r"^okay\s*,?\s*move\s+on$"),
+    re.compile(r"^ok\s*,?\s*move\s+on$"),
     re.compile(r"^lets?\s+continue$"),
     re.compile(r"^go\s+ahead$"),
     re.compile(r"^please\s+go\s+ahead$"),
@@ -336,13 +349,31 @@ _CONTINUE_PATTERNS = (
     re.compile(r"^lets?\s+move\s+on$"),
     re.compile(r"^proceed$"),
     re.compile(r"^you\s+can\s+proceed$"),
+    re.compile(r"^please\s+proceed$"),
+    re.compile(r"^yes\s*,?\s*please\s+proceed$"),
     re.compile(r"^resume$"),
     re.compile(r"^continue\s+from\s+where\s+you\s+stopped$"),
     re.compile(r"^continue\s+from\s+where\s+you\s+left\s+off$"),
-    re.compile(r"^no\s+questions?\s*,?\s*continue$"),
-    re.compile(r"^no\s+further\s+questions?\s*,?\s*continue$"),
+    re.compile(r"^no\s+questions?\s*,?\s*(?:please\s+)?continue$"),
+    re.compile(r"^no\s+further\s+questions?\s*,?\s*(?:please\s+)?continue$"),
+    re.compile(r"^no\s+more\s+questions?\s*,?\s*(?:please\s+)?(?:continue|go\s+ahead)?$"),
+    re.compile(r"^that\s+is\s+clear\s*,?\s*(?:please\s+)?continue$"),
+    re.compile(r"^thats\s+clear\s*,?\s*(?:please\s+)?continue$"),
+    re.compile(r"^that's\s+clear\s*,?\s*(?:please\s+)?continue$"),
     re.compile(r"^i'?m\s+ready\s+to\s+continue$"),
     re.compile(r"^ready\s+to\s+continue$"),
+)
+
+_CONTINUE_BLOCK = (
+    re.compile(r"\bi\s+don'?t\s+want\s+to\s+continue\b"),
+    re.compile(r"\bdon'?t\s+continue(?:\s+yet)?\b"),
+    re.compile(r"\bdo\s+not\s+continue\b"),
+    re.compile(r"\bbefore\s+we\s+continue\b"),
+    re.compile(r"\banother\s+question\s+before\b"),
+    re.compile(r"\bquestion\s+before\s+(?:we\s+)?(?:continu|moving\s+on|move\s+on)\b"),
+    re.compile(r"\bexplain\b.*\bbefore\s+(?:we\s+)?continu"),
+    re.compile(r"\brepeat\b.*\bbefore\s+(?:we\s+)?continu"),
+    re.compile(r"\bbefore\s+(?:we\s+)?(?:move\s+on|moving\s+on)\b"),
 )
 
 _REPEAT_PATTERNS = (
@@ -490,6 +521,15 @@ def parse_classroom_control(
     if _is_blocked_question(normalized):
         return None
 
+    if any(p.search(normalized) for p in _CONTINUE_BLOCK):
+        if _is_negated(normalized):
+            return ClassroomControlIntent(
+                kind=ClassroomControlKind.STAY,
+                raw=raw,
+                clarify_prompt="Okay, we'll stay on this slide.",
+            )
+        return None
+
     if _is_negated(normalized):
         return ClassroomControlIntent(
             kind=ClassroomControlKind.STAY,
@@ -533,6 +573,11 @@ def parse_classroom_control(
     for candidate in candidates:
         if any(p.fullmatch(candidate) for p in _QA_AMBIGUOUS_NO):
             return None
+        if _match_any(_CONTINUE_PATTERNS, candidate):
+            return ClassroomControlIntent(
+                kind=ClassroomControlKind.CONTINUE,
+                raw=raw,
+            )
         if _match_any(_QA_COMPLETE_PATTERNS, candidate):
             return ClassroomControlIntent(
                 kind=ClassroomControlKind.QA_COMPLETION,
@@ -550,9 +595,9 @@ def parse_classroom_control(
                 kind=ClassroomControlKind.ACKNOWLEDGE,
                 raw=raw,
             )
-        if _match_any(_CONTINUE_PATTERNS, candidate):
+        if _match_any(_AFFIRM_PATTERNS, candidate):
             return ClassroomControlIntent(
-                kind=ClassroomControlKind.CONTINUE,
+                kind=ClassroomControlKind.AFFIRM,
                 raw=raw,
             )
         if _match_any(_REPEAT_PATTERNS, candidate):

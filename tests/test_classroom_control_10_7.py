@@ -17,7 +17,6 @@ from narration_prefetch import NarrationPrefetchCache, PrefetchState
 from presentation_runtime import (
     CHECKPOINT_REMINDER_TEXT,
     POST_ANSWER_INVITE_CHECKPOINT,
-    POST_ANSWER_INVITE_MID_SLIDE,
     OutputPurpose,
     PresentationRuntime,
     RecordingFrameSink,
@@ -50,7 +49,7 @@ TWO = (
 
 
 async def drain_purpose(runtime: PresentationRuntime, *purposes: OutputPurpose) -> None:
-    for _ in range(6):
+    for _ in range(8):
         if runtime.output_purpose in purposes:
             await runtime.on_bot_started_speaking()
             await runtime.on_bot_stopped_speaking()
@@ -228,13 +227,18 @@ def test_continue_after_mid_slide_question_resumes() -> None:
         await runtime.on_bot_started_speaking()
         await runtime.on_bot_stopped_speaking()
         assert runtime.output_purpose is OutputPurpose.POST_ANSWER_INVITE
-        assert POST_ANSWER_INVITE_MID_SLIDE in sink.tts_texts
+        from classroom_copy import mid_slide_followup
+
+        assert mid_slide_followup(runtime.state.cursor.slide_index) in sink.tts_texts
         await runtime.on_bot_started_speaking()
         await runtime.on_bot_stopped_speaking()
         ok = await runtime.handle_classroom_control(
             parse_classroom_control("You can continue.")
         )
         assert ok
+        assert runtime.output_purpose is OutputPurpose.RESUME_BRIDGE
+        await runtime.on_bot_started_speaking()
+        await runtime.on_bot_stopped_speaking()
         assert runtime.output_purpose is OutputPurpose.RESUMED_NARRATION
 
     asyncio.run(_run())

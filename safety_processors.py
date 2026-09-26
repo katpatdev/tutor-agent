@@ -162,6 +162,10 @@ class InputSafetyProcessor(FrameProcessor):
                         )
                     except Exception:  # noqa: BLE001
                         pass
+                try:
+                    await self._runtime.record_user_utterance(text)
+                except Exception:  # noqa: BLE001
+                    pass
                 await self.push_frame(frame, direction)
                 return
 

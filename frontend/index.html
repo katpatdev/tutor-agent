@@ -3,50 +3,104 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AI Natural Disasters Tutor</title>
+    <title>AI Science Tutor</title>
   </head>
 
   <body>
-    <div class="container">
-      <header class="app-header">
-        <h1>AI Natural Disasters Tutor</h1>
-        <p class="tagline">Voice lesson with pause, resume, and slide navigation</p>
+    <div class="app-shell">
+      <header class="app-header" role="banner">
+        <div class="brand-block">
+          <h1 class="app-title">AI Science Tutor</h1>
+          <p class="app-subtitle">Interactive voice-guided lesson</p>
+        </div>
+        <div
+          class="connection-pill"
+          id="connection-pill"
+          data-status="disconnected"
+          aria-live="polite"
+        >
+          <span class="connection-dot" aria-hidden="true"></span>
+          <span class="connection-label">
+            <span class="sr-only">Connection status:</span>
+            <span id="connection-status">Disconnected</span>
+          </span>
+        </div>
       </header>
 
-      <section class="status-bar" aria-label="Connection">
-        <div class="status" aria-live="polite">
-          Transport: <span id="connection-status">Disconnected</span>
-        </div>
-        <div class="consent-row">
-          <label for="transcript-consent">
-            <input type="checkbox" id="transcript-consent" />
-            Allow this session’s redacted conversation transcript to be stored
-            locally for improving future lessons.
-          </label>
-          <p id="transcript-storage-state" class="hint" aria-live="polite">
-            Transcript storage: OFF
+      <main class="app-main">
+        <section class="progress-card" aria-label="Lesson progress">
+          <div class="progress-meta">
+            <p class="progress-slide" id="lesson-slide">Slide — of 8</p>
+            <p class="progress-mode">
+              Mode: <span id="lesson-mode">—</span>
+            </p>
+          </div>
+          <div
+            class="slide-track"
+            id="slide-track"
+            role="list"
+            aria-label="Slide progress"
+          ></div>
+          <div
+            class="progress-bar"
+            role="progressbar"
+            aria-valuemin="0"
+            aria-valuemax="8"
+            aria-valuenow="0"
+            id="progress-bar"
+            aria-label="Lesson progress"
+          >
+            <div class="progress-fill" id="progress-fill"></div>
+          </div>
+        </section>
+
+        <section class="slide-stage" aria-label="Current slide">
+          <div class="stage-top">
+            <span class="stage-kicker" id="stage-slide-number">Slide —</span>
+            <div
+              class="tutor-status"
+              id="tutor-status"
+              data-status="idle"
+              aria-live="polite"
+            >
+              <span class="tutor-status-pulse" aria-hidden="true"></span>
+              <span id="tutor-status-label">Ready</span>
+            </div>
+          </div>
+          <h2 class="stage-title" id="lesson-title">Connect to begin the lesson</h2>
+          <p class="stage-supporting" id="narration-status">
+            Your tutor will guide you through natural disasters with voice,
+            questions, and slide navigation.
           </p>
-          <p id="transcript-status" class="hint" aria-live="polite"></p>
-        </div>
-        <div class="controls">
-          <button type="button" id="connect-btn">Connect</button>
-          <button type="button" id="disconnect-btn" disabled>Disconnect</button>
-        </div>
-      </section>
+          <p class="stage-hint">
+            Resume continues from the interrupted narration segment (not exact
+            audio bytes). Browser microphone controls are separate from this app.
+          </p>
+        </section>
 
-      <section class="lesson-panel" aria-label="Lesson controls">
-        <div class="lesson-status" aria-live="polite">
-          <p><strong>Mode:</strong> <span id="lesson-mode">—</span></p>
-          <p><strong>Slide:</strong> <span id="lesson-slide">Slide — of 8</span></p>
-          <p><strong>Title:</strong> <span id="lesson-title">—</span></p>
-          <p id="narration-status" class="hint"></p>
-        </div>
+        <section class="controls-card" aria-label="Lesson controls">
+          <div class="controls-row session-controls">
+            <button type="button" id="connect-btn" class="btn btn-primary">
+              Connect
+            </button>
+            <button
+              type="button"
+              id="disconnect-btn"
+              class="btn btn-danger"
+              disabled
+            >
+              Disconnect
+            </button>
+            <button type="button" id="pause-btn" class="btn btn-secondary" disabled>
+              Pause
+            </button>
+            <button type="button" id="resume-btn" class="btn btn-secondary" disabled>
+              Resume
+            </button>
+          </div>
 
-        <div class="lesson-controls">
-          <button type="button" id="pause-btn" disabled>Pause</button>
-          <button type="button" id="resume-btn" disabled>Resume</button>
-          <div class="goto-row">
-            <label for="slide-select">Go to slide</label>
+          <div class="controls-row goto-row">
+            <label class="field-label" for="slide-select">Go to slide</label>
             <select id="slide-select" disabled>
               <option value="1">1. Welcome &amp; Overview</option>
               <option value="2">2. What Are Natural Disasters</option>
@@ -57,55 +111,119 @@
               <option value="7">7. Preparedness and Safety</option>
               <option value="8">8. Conclusion &amp; Discussion</option>
             </select>
-            <button type="button" id="goto-btn" disabled>Go to Slide</button>
+            <button type="button" id="goto-btn" class="btn btn-secondary" disabled>
+              Go to Slide
+            </button>
           </div>
-        </div>
 
-        <p class="error-box" id="command-error" role="alert" aria-live="assertive"></p>
-        <p class="safety-notice" id="safety-notice" aria-live="polite"></p>
-        <p class="hint">
-          Resume continues from the interrupted narration segment (not exact audio bytes).
-          Use the labeled Pause / Resume / Connect / Disconnect buttons here — browser or
-          OS microphone device controls are separate from this app.
-        </p>
-      </section>
+          <div class="consent-row">
+            <label for="transcript-consent">
+              <input type="checkbox" id="transcript-consent" />
+              Allow this session’s redacted conversation transcript to be stored
+              locally for improving future lessons.
+            </label>
+            <p id="transcript-storage-state" class="hint" aria-live="polite">
+              Transcript storage: OFF
+            </p>
+            <p id="transcript-status" class="hint" aria-live="polite"></p>
+          </div>
 
-      <section class="knowledge-panel" aria-label="Knowledge upload">
-        <h2>Classroom knowledge</h2>
-        <p class="hint">
-          Upload .txt, .md, or text-based .pdf notes. Knowledge is stored in server memory
-          only until the backend restarts.
-        </p>
-        <div class="knowledge-controls">
-          <input
-            type="file"
-            id="knowledge-file"
-            accept=".txt,.md,.pdf,text/plain,text/markdown,application/pdf"
-          />
-          <button type="button" id="knowledge-upload-btn">Upload</button>
-        </div>
-        <p id="knowledge-counts" aria-live="polite">0 document(s), 0 chunk(s)</p>
-        <p id="knowledge-upload-status" aria-live="polite"></p>
-        <p
-          class="error-box"
-          id="knowledge-upload-error"
-          role="alert"
-          aria-live="assertive"
-        ></p>
-        <p>
-          <strong>Sources used for latest answer:</strong>
-          <span id="knowledge-sources" aria-live="polite">—</span>
-        </p>
-      </section>
+          <p
+            class="error-box"
+            id="command-error"
+            role="alert"
+            aria-live="assertive"
+          ></p>
+          <p class="safety-notice" id="safety-notice" aria-live="polite"></p>
+        </section>
 
-      <audio id="bot-audio" autoplay></audio>
+        <section class="knowledge-card" aria-label="Classroom knowledge">
+          <h2>Classroom knowledge</h2>
+          <p class="hint">
+            Upload .txt, .md, or text-based .pdf notes. Knowledge is stored in
+            server memory only until the backend restarts.
+          </p>
+          <div class="knowledge-controls">
+            <input
+              type="file"
+              id="knowledge-file"
+              accept=".txt,.md,.pdf,text/plain,text/markdown,application/pdf"
+            />
+            <button type="button" id="knowledge-upload-btn" class="btn btn-secondary">
+              Upload
+            </button>
+          </div>
+          <p id="knowledge-counts" aria-live="polite">0 document(s), 0 chunk(s)</p>
+          <p id="knowledge-upload-status" aria-live="polite"></p>
+          <p
+            class="error-box"
+            id="knowledge-upload-error"
+            role="alert"
+            aria-live="assertive"
+          ></p>
+          <p>
+            <strong>Sources used for latest answer:</strong>
+            <span id="knowledge-sources" aria-live="polite">—</span>
+          </p>
+        </section>
 
-      <section class="debug-panel" aria-label="Transcript and debug">
-        <h2>Transcript / Debug</h2>
-        <div id="debug-log"></div>
-      </section>
+        <section class="conversation-card" aria-label="Live Conversation">
+          <div class="conversation-header">
+            <h2>Live Conversation</h2>
+            <button
+              type="button"
+              id="jump-latest-btn"
+              class="btn btn-ghost jump-latest-btn"
+              hidden
+            >
+              Jump to latest
+            </button>
+          </div>
+          <p class="hint conversation-note">
+            Tutor and student speech for this session. Prefetched narration appears
+            only when it is presented aloud.
+          </p>
+          <div
+            id="conversation-log"
+            class="conversation-log"
+            role="log"
+            aria-live="polite"
+            aria-relevant="additions"
+          ></div>
+        </section>
+
+        <section class="activity-card" aria-label="Technical Logs">
+          <div class="activity-header">
+            <h2>Technical Logs</h2>
+            <button
+              type="button"
+              id="clear-activity-btn"
+              class="btn btn-ghost"
+              aria-label="Clear technical logs"
+            >
+              Clear view
+            </button>
+          </div>
+          <p class="hint activity-note">
+            Connection, lesson state, commands, and diagnostics. Classroom speech
+            belongs in Live Conversation above.
+          </p>
+          <div
+            id="debug-log"
+            class="activity-log"
+            role="log"
+            aria-live="polite"
+            aria-relevant="additions"
+          ></div>
+        </section>
+      </main>
+
+      <footer class="app-footer">
+        <p>Natural disasters lesson · Voice tutor for the classroom</p>
+      </footer>
     </div>
 
+    <audio id="bot-audio" autoplay></audio>
     <script type="module" src="./app.ts"></script>
     <link rel="stylesheet" href="./style.css" />
   </body>

@@ -58,6 +58,36 @@ export type LessonServerMessage =
   | LessonStateMessage
   | LessonCommandResultMessage;
 
+export type ConversationEntry = {
+  entry_id: string;
+  sequence: number;
+  role: 'user' | 'assistant';
+  text: string;
+  timestamp: number;
+  slide_number?: number;
+  slide_title?: string;
+  mode?: string;
+  source?: string;
+  playback_status?: string;
+};
+
+export type ConversationEntryMessage = {
+  type: 'conversation.entry';
+  version: 1;
+  kind: 'created' | 'updated';
+  entry: ConversationEntry;
+};
+
+export type ConversationSnapshotMessage = {
+  type: 'conversation.snapshot';
+  version: 1;
+  entries: ConversationEntry[];
+};
+
+export type ConversationServerMessage =
+  | ConversationEntryMessage
+  | ConversationSnapshotMessage;
+
 const MODE_LABELS: Record<string, string> = {
   IDLE: 'Idle',
   PRESENTING: 'Presenting',
@@ -196,6 +226,115 @@ export function parseServerMessage(raw: unknown): LessonServerMessage | null {
   }
 
   return null;
+}
+
+function parseConversationEntry(raw: unknown): ConversationEntry | null {
+  if (!isObject(raw)) return null;
+  if (typeof raw.entry_id !== 'string') return null;
+  if (typeof raw.sequence !== 'number') return null;
+  if (raw.role !== 'user' && raw.role !== 'assistant') return null;
+  if (typeof raw.text !== 'string') return null;
+  if (typeof raw.timestamp !== 'number') return null;
+  const entry: ConversationEntry = {
+    entry_id: raw.entry_id,
+    sequence: raw.sequence,
+    role: raw.role,
+    text: raw.text,
+    timestamp: raw.timestamp,
+  };
+  if (typeof raw.slide_number === 'number') entry.slide_number = raw.slide_number;
+  if (typeof raw.slide_title === 'string') entry.slide_title = raw.slide_title;
+  if (typeof raw.mode === 'string') entry.mode = raw.mode;
+  if (typeof raw.source === 'string') entry.source = raw.source;
+  if (typeof raw.playback_status === 'string') {
+    entry.playback_status = raw.playback_status;
+  }
+  return entry;
+}
+
+export function parseConversationMessage(
+  raw: unknown
+): ConversationServerMessage | null {
+  if (!isObject(raw)) return null;
+  if (raw.version !== 1) return null;
+  if (raw.type === 'conversation.snapshot') {
+    if (!Array.isArray(raw.entries)) return null;
+    const entries: ConversationEntry[] = [];
+    for (const item of raw.entries) {
+      const parsed = parseConversationEntry(item);
+      if (!parsed) return null;
+      entries.push(parsed);
+    }
+    return { type: 'conversation.snapshot', version: 1, entries };
+  }
+  if (raw.type === 'conversation.entry') {
+    if (raw.kind !== 'created' && raw.kind !== 'updated') return null;
+    const entry = parseConversationEntry(raw.entry);
+    if (!entry) return null;
+    return {
+      type: 'conversation.entry',
+      version: 1,
+      kind: raw.kind,
+      entry,
+    };
+  }
+  return null;
+}
+
+export class ConversationTracker {
+  private entries: ConversationEntry[] = [];
+  private byId = new Map<string, ConversationEntry>();
+  private latestSequence = 0;
+
+  get list(): ConversationEntry[] {
+    return this.entries.slice();
+  }
+
+  reset(): void {
+    this.entries = [];
+    this.byId.clear();
+    this.latestSequence = 0;
+  }
+
+  applySnapshot(entries: ConversationEntry[]): void {
+    this.reset();
+    for (const entry of entries) {
+      this.upsert(entry, { allowStale: true });
+    }
+  }
+
+  applyEvent(
+    kind: 'created' | 'updated',
+    entry: ConversationEntry
+  ): boolean {
+    return this.upsert(entry, { allowStale: kind === 'updated' });
+  }
+
+  private upsert(
+    entry: ConversationEntry,
+    opts: { allowStale: boolean }
+  ): boolean {
+    const existing = this.byId.get(entry.entry_id);
+    if (existing) {
+      if (!opts.allowStale && entry.sequence < existing.sequence) {
+        return false;
+      }
+      if (entry.sequence < existing.sequence) {
+        return false;
+      }
+      Object.assign(existing, entry);
+      this.latestSequence = Math.max(this.latestSequence, entry.sequence);
+      return true;
+    }
+    if (this.byId.has(entry.entry_id)) {
+      return false;
+    }
+    this.byId.set(entry.entry_id, entry);
+    this.entries.push(entry);
+    this.entries.sort((a, b) => a.sequence - b.sequence);
+    this.latestSequence = Math.max(this.latestSequence, entry.sequence);
+    return true;
+  }
 }
 
 export class LessonStateTracker {

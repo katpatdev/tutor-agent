@@ -97,6 +97,9 @@ def test_pre_audio_interruption_answer_completion_is_accepted() -> None:
         await runtime.on_bot_stopped_speaking()
         from classroom_control import parse_classroom_control
         assert await runtime.handle_classroom_control(parse_classroom_control("Continue."))
+        assert runtime.output_purpose is OutputPurpose.RESUME_BRIDGE
+        await runtime.on_bot_started_speaking()
+        await runtime.on_bot_stopped_speaking()
         assert runtime.output_purpose is OutputPurpose.RESUMED_NARRATION
 
     asyncio.run(_run())
@@ -130,6 +133,9 @@ def test_mid_audio_interruption_suppresses_only_cancelled_utterance() -> None:
         await runtime.on_bot_stopped_speaking()
         from classroom_control import parse_classroom_control
         assert await runtime.handle_classroom_control(parse_classroom_control("Continue."))
+        assert runtime.output_purpose is OutputPurpose.RESUME_BRIDGE
+        await runtime.on_bot_started_speaking()
+        await runtime.on_bot_stopped_speaking()
         assert sink.tts_texts[-1] == "First section."
         assert runtime.segment_replays == 1
 
